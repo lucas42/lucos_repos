@@ -1,9 +1,10 @@
 import express from 'express';
 import { chdir } from 'process';
 import { writeFile, mkdir } from 'fs/promises';
-import { exec as raw_exec, execSync } from 'child_process';
+import { exec as raw_exec, execFile as raw_execFile, execSync } from 'child_process';
 import { promisify } from 'util';
 const exec = promisify(raw_exec);
+const execFile = promisify(raw_execFile);
 
 const port = process.env.PORT;
 if (!port) throw "no PORT environment variable set";
@@ -72,7 +73,7 @@ app.post("/github/webhook", catchErrors(async (req, res) => {
 		} catch {
 			console.log(`DEBUG Local copy of ${repo_name} not found - cloning...`)
 			chdir("/usr/src/repos");
-			await exec(`git clone ${ssh_url}`, {stdio: 'inherit'});
+			await execFile('git', ['clone', ssh_url], {stdio: 'inherit'});
 			chdir(`/usr/src/repos/${repo_name}`);
 		}
 		await exec("git pull --rebase --autostash", {stdio: 'inherit'});
