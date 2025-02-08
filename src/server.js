@@ -77,7 +77,7 @@ app.post("/github/webhook", catchErrors(async (req, res) => {
 		}
 		await exec("git pull --rebase --autostash", {stdio: 'inherit'});
 		await exec("npm version patch", {stdio: 'inherit'});
-		await exec("git push origin", {stdio: 'inherit'});
+		await exec("git push --follow-tags origin", {stdio: 'inherit'});
 		res.send("New version pushed");
 	} else {
 		console.error(`ERROR Unknown webhook from github of type ${eventType}`);
