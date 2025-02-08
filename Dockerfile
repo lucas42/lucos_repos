@@ -1,7 +1,8 @@
 FROM node:23-alpine
 
 WORKDIR /usr/src/app
-RUN apk add git
+RUN mkdir /usr/src/repos
+RUN apk add git openssh
 
 COPY package* ./
 RUN npm install

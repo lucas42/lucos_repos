@@ -1,11 +1,12 @@
 services:
   lucos_repos:
     build: .
+    container_name: lucos_repos
     ports: 
       - "8030:8030"
     environment:
       - PORT=8030
       - GIT_EMAIL
-      - GITHUB_PAT
+      - GITHUB_SSH
     image: lucas42/lucos_repos
     restart: always
