@@ -1,7 +1,20 @@
 import express from 'express';
+import { execSync } from 'child_process';
 
 const port = process.env.PORT;
 if (!port) throw "no PORT environment variable set";
+const git_email = process.env.GIT_EMAIL;
+if (!git_email) throw "no GIT_EMAIL environment variable set";
+
+
+execSync(
+	"git config --global user.name 'lucos_repos'",
+	{stdio: 'inherit'},
+);
+execSync(
+	`git config --global user.email "${git_email}"`,
+	{stdio: 'inherit'},
+);
 
 const app = express();
 

@@ -4,6 +4,8 @@ services:
     ports: 
       - "8030:8030"
     environment:
-      PORT: 8030
+      - PORT=8030
+      - GIT_EMAIL
+      - GITHUB_PAT
     image: lucas42/lucos_repos
     restart: always
