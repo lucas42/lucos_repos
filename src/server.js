@@ -57,7 +57,7 @@ app.post("/github/webhook", catchErrors(async (req, res) => {
 		const repo_owner = req.body.repository.owner.login;
 		if (repo_owner != "lucas42") throw `${repo_owner} doesn't even go here`;
 		const repo_name = req.body.repository.name;
-		const head_committer = req.body.head_commit.committer.email;
+		const head_committer = req.body.head_commit?.committer.email;
 		const ssh_url = req.body.repository.ssh_url;
 		console.log(`INFO Github webhook called eventType=${eventType}, ref=${ref}, repo_name=${repo_name}, head_committer=${head_committer}`);
 		if (ref != "refs/heads/main") {
