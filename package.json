@@ -1,0 +1,13 @@
+{
+  "name": "lucos_repos",
+  "version": "0.0.1",
+  "description": "Management of code repositories",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

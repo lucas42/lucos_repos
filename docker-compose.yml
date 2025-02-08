@@ -1,0 +1,9 @@
+services:
+  lucos_repos:
+    build: .
+    ports: 
+      - "8030:8030"
+    environment:
+      PORT: 8030
+    image: lucas42/lucos_repos
+    restart: always
