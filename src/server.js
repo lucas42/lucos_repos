@@ -80,6 +80,8 @@ app.post("/github/webhook", catchErrors(async (req, res) => {
 		await exec("npm version patch", {stdio: 'inherit'});
 		await exec("git push --follow-tags origin", {stdio: 'inherit'});
 		res.send("New version pushed");
+	} if (eventType == "ping") {
+		res.send("Pong");
 	} else {
 		console.error(`ERROR Unknown webhook from github of type ${eventType}`);
 		throw `Unknown event type ${eventType}`;
