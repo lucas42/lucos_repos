@@ -1,4 +1,4 @@
-FROM node:25.1.0-alpine3.21
+FROM node:25.2.0-alpine3.21
 
 WORKDIR /usr/src/app
 RUN mkdir /usr/src/repos
