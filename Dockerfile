@@ -12,6 +12,5 @@ COPY src .
 RUN npm prune --omit=dev
 
 ENV NODE_ENV production
-EXPOSE $PORT
 
 CMD [ "npm", "start" ]
