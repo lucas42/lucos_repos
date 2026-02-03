@@ -50,42 +50,8 @@ app.get('/_info', catchErrors(async (req, res) => {
 }));
 
 app.post("/github/webhook", catchErrors(async (req, res) => {
-	const eventType = req.get("X-GitHub-Event");
-	const signature = req.get("X-Hub-Signature-256"); // TODO: verify signature if any sensitive logic is added below
-	if (eventType == "push") {
-		const ref = req.body.ref;
-		const repo_owner = req.body.repository.owner.login;
-		if (repo_owner != "lucas42") throw `${repo_owner} doesn't even go here`;
-		const repo_name = req.body.repository.name;
-		const head_committer = req.body.head_commit?.committer.email;
-		const ssh_url = req.body.repository.ssh_url;
-		console.log(`INFO Github webhook called eventType=${eventType}, ref=${ref}, repo_name=${repo_name}, head_committer=${head_committer}`);
-		if (ref != "refs/heads/main") {
-			console.log("DEBUG Ignore - not on main branch");
-			return res.send("No Action: Not on main");
-		}
-		if (head_committer == git_email) {
-			console.log("DEBUG Ignore - push caused by this service");
-			return res.send("No Action: Push came from this service");
-		}
-		try {
-			chdir(`/usr/src/repos/${repo_name}`);
-		} catch {
-			console.log(`DEBUG Local copy of ${repo_name} not found - cloning...`)
-			chdir("/usr/src/repos");
-			await execFile('git', ['clone', ssh_url], {stdio: 'inherit'});
-			chdir(`/usr/src/repos/${repo_name}`);
-		}
-		await exec("git pull --rebase --autostash", {stdio: 'inherit'});
-		await exec("npm version patch", {stdio: 'inherit'});
-		await exec("git push --follow-tags origin", {stdio: 'inherit'});
-		res.send("New version pushed");
-	} else if (eventType == "ping") {
-		res.send("Pong");
-	} else {
-		console.error(`ERROR Unknown webhook from github of type ${eventType}`);
-		throw `Unknown event type ${eventType}`;
-	}
+	res.status(410);
+	res.send('This webhook has been replaced by the `calc-version` command in lucos_deploy_orb\n');
 }));
 
 app.listen(port, () => {
