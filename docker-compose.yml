@@ -2,11 +2,16 @@ services:
   lucos_repos:
     build: .
     container_name: lucos_repos
-    ports: 
-      - $PORT:$PORT
+    image: lucas42/lucos_repos
+    ports:
+      - ${PORT}:${PORT}
     environment:
       - PORT
-      - GIT_EMAIL
-      - GITHUB_SSH
-    image: lucas42/lucos_repos
+      - SYSTEM
+      - ENVIRONMENT
+    volumes:
+      - data:/data
     restart: always
+
+volumes:
+  data:

@@ -1,16 +1,17 @@
-FROM node:25.2.1-alpine3.21
+FROM golang:1.26 AS builder
 
-WORKDIR /usr/src/app
-RUN mkdir /usr/src/repos
-RUN apk add git openssh
+WORKDIR /go/src/lucos_repos
 
-COPY package* ./
-RUN npm install
+COPY go.mod ./
+RUN go mod download
 
-COPY src .
+COPY *.go ./
+RUN go build -o lucos_repos
 
-RUN npm prune --omit=dev
+FROM debian:trixie-slim
 
-ENV NODE_ENV production
+WORKDIR /app
 
-CMD [ "npm", "start" ]
+COPY --from=builder /go/src/lucos_repos/lucos_repos .
+
+CMD ["./lucos_repos"]
