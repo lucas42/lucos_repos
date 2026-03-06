@@ -192,3 +192,79 @@ func (db *DB) GetFindings() ([]FindingRow, error) {
 	}
 	return findings, nil
 }
+
+// ConventionStatus is the per-convention entry in a StatusReport.
+type ConventionStatus struct {
+	Pass     bool   `json:"pass"`
+	Detail   string `json:"detail"`
+	IssueURL string `json:"issue_url,omitempty"`
+}
+
+// RepoStatus is the per-repo entry in a StatusReport.
+type RepoStatus struct {
+	Conventions map[string]ConventionStatus `json:"conventions"`
+	Compliant   bool                        `json:"compliant"`
+}
+
+// StatusSummary holds aggregate counts across all repos.
+type StatusSummary struct {
+	TotalRepos      int `json:"total_repos"`
+	CompliantRepos  int `json:"compliant_repos"`
+	TotalViolations int `json:"total_violations"`
+}
+
+// StatusReport is the full compliance status returned by GET /api/status.
+type StatusReport struct {
+	Repos   map[string]RepoStatus `json:"repos"`
+	Summary StatusSummary         `json:"summary"`
+}
+
+// GetStatusReport builds a StatusReport from the cached findings in the database.
+// It returns an empty report (not an error) if no findings have been stored yet.
+func (db *DB) GetStatusReport() (StatusReport, error) {
+	findings, err := db.GetFindings()
+	if err != nil {
+		return StatusReport{}, fmt.Errorf("failed to get findings for status report: %w", err)
+	}
+
+	repos := map[string]RepoStatus{}
+	for _, f := range findings {
+		rs, ok := repos[f.Repo]
+		if !ok {
+			rs = RepoStatus{
+				Conventions: map[string]ConventionStatus{},
+				Compliant:   true,
+			}
+		}
+		rs.Conventions[f.Convention] = ConventionStatus{
+			Pass:     f.Pass,
+			Detail:   f.Detail,
+			IssueURL: f.IssueURL,
+		}
+		if !f.Pass {
+			rs.Compliant = false
+		}
+		repos[f.Repo] = rs
+	}
+
+	var totalViolations, compliantRepos int
+	for _, rs := range repos {
+		if rs.Compliant {
+			compliantRepos++
+		}
+		for _, cs := range rs.Conventions {
+			if !cs.Pass {
+				totalViolations++
+			}
+		}
+	}
+
+	return StatusReport{
+		Repos: repos,
+		Summary: StatusSummary{
+			TotalRepos:      len(repos),
+			CompliantRepos:  compliantRepos,
+			TotalViolations: totalViolations,
+		},
+	}, nil
+}

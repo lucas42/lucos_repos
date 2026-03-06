@@ -288,3 +288,134 @@ func TestOpenDB_InvalidPath(t *testing.T) {
 		t.Error("expected error for invalid path, got nil")
 	}
 }
+
+// TestGetStatusReport_Empty verifies that an empty database returns a zeroed summary.
+func TestGetStatusReport_Empty(t *testing.T) {
+	db := openTestDB(t)
+
+	report, err := db.GetStatusReport()
+	if err != nil {
+		t.Fatalf("GetStatusReport failed: %v", err)
+	}
+	if len(report.Repos) != 0 {
+		t.Errorf("expected empty repos map, got %d entries", len(report.Repos))
+	}
+	if report.Summary.TotalRepos != 0 {
+		t.Errorf("expected TotalRepos 0, got %d", report.Summary.TotalRepos)
+	}
+	if report.Summary.CompliantRepos != 0 {
+		t.Errorf("expected CompliantRepos 0, got %d", report.Summary.CompliantRepos)
+	}
+	if report.Summary.TotalViolations != 0 {
+		t.Errorf("expected TotalViolations 0, got %d", report.Summary.TotalViolations)
+	}
+}
+
+// TestGetStatusReport_AllPassing verifies a fully compliant report.
+func TestGetStatusReport_AllPassing(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.UpsertRepo("lucas42/repo_a"); err != nil {
+		t.Fatalf("UpsertRepo failed: %v", err)
+	}
+	if err := db.UpsertConvention("conv-1", "First convention"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+	if err := db.SaveFinding(ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_a", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	report, err := db.GetStatusReport()
+	if err != nil {
+		t.Fatalf("GetStatusReport failed: %v", err)
+	}
+
+	if report.Summary.TotalRepos != 1 {
+		t.Errorf("expected TotalRepos 1, got %d", report.Summary.TotalRepos)
+	}
+	if report.Summary.CompliantRepos != 1 {
+		t.Errorf("expected CompliantRepos 1, got %d", report.Summary.CompliantRepos)
+	}
+	if report.Summary.TotalViolations != 0 {
+		t.Errorf("expected TotalViolations 0, got %d", report.Summary.TotalViolations)
+	}
+
+	rs, ok := report.Repos["lucas42/repo_a"]
+	if !ok {
+		t.Fatal("expected entry for 'lucas42/repo_a' in report")
+	}
+	if !rs.Compliant {
+		t.Error("expected repo to be compliant")
+	}
+	cs, ok := rs.Conventions["conv-1"]
+	if !ok {
+		t.Fatal("expected 'conv-1' convention entry")
+	}
+	if !cs.Pass {
+		t.Error("expected convention to pass")
+	}
+	if cs.Detail != "ok" {
+		t.Errorf("expected detail 'ok', got %q", cs.Detail)
+	}
+}
+
+// TestGetStatusReport_WithViolations verifies counts when some repos fail conventions.
+func TestGetStatusReport_WithViolations(t *testing.T) {
+	db := openTestDB(t)
+
+	for _, repo := range []string{"lucas42/repo_a", "lucas42/repo_b"} {
+		if err := db.UpsertRepo(repo); err != nil {
+			t.Fatalf("UpsertRepo failed: %v", err)
+		}
+	}
+	for _, conv := range []string{"conv-1", "conv-2"} {
+		if err := db.UpsertConvention(conv, conv+" description"); err != nil {
+			t.Fatalf("UpsertConvention failed: %v", err)
+		}
+	}
+
+	// repo_a: conv-1 passes, conv-2 fails.
+	if err := db.SaveFinding(ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_a", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+	if err := db.SaveFinding(ConventionResult{Convention: "conv-2", Pass: false, Detail: "missing"}, "lucas42/repo_a", "https://github.com/lucas42/repo_a/issues/1"); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	// repo_b: both pass.
+	if err := db.SaveFinding(ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_b", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+	if err := db.SaveFinding(ConventionResult{Convention: "conv-2", Pass: true, Detail: "ok"}, "lucas42/repo_b", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	report, err := db.GetStatusReport()
+	if err != nil {
+		t.Fatalf("GetStatusReport failed: %v", err)
+	}
+
+	if report.Summary.TotalRepos != 2 {
+		t.Errorf("expected TotalRepos 2, got %d", report.Summary.TotalRepos)
+	}
+	if report.Summary.CompliantRepos != 1 {
+		t.Errorf("expected CompliantRepos 1, got %d", report.Summary.CompliantRepos)
+	}
+	if report.Summary.TotalViolations != 1 {
+		t.Errorf("expected TotalViolations 1, got %d", report.Summary.TotalViolations)
+	}
+
+	repoA := report.Repos["lucas42/repo_a"]
+	if repoA.Compliant {
+		t.Error("repo_a should not be compliant")
+	}
+	csA2 := repoA.Conventions["conv-2"]
+	if csA2.IssueURL != "https://github.com/lucas42/repo_a/issues/1" {
+		t.Errorf("expected issue_url, got %q", csA2.IssueURL)
+	}
+
+	repoB := report.Repos["lucas42/repo_b"]
+	if !repoB.Compliant {
+		t.Error("repo_b should be compliant")
+	}
+}
