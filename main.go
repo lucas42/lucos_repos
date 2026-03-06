@@ -19,6 +19,11 @@ type InfoResponse struct {
 	Title          string            `json:"title"`
 }
 
+type Check struct {
+	OK         bool   `json:"ok"`
+	TechDetail string `json:"techDetail"`
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -31,12 +36,29 @@ func main() {
 		system = "lucos_repos"
 	}
 
+	githubAuth, err := NewGitHubAuthClient()
+	if err != nil {
+		slog.Error("Failed to initialise GitHub App authentication", "error", err)
+		os.Exit(2)
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /_info", func(w http.ResponseWriter, r *http.Request) {
+		_, tokenErr := githubAuth.GetInstallationToken()
+		githubAuthCheck := Check{
+			OK:         tokenErr == nil,
+			TechDetail: "Checks whether a valid GitHub App installation token can be obtained",
+		}
+		if tokenErr != nil {
+			slog.Warn("GitHub auth check failed", "error", tokenErr)
+		}
+
 		info := InfoResponse{
-			System:  system,
-			Checks:  map[string]any{},
+			System: system,
+			Checks: map[string]any{
+				"github-auth": githubAuthCheck,
+			},
 			Metrics: map[string]any{},
 			CI: map[string]string{
 				"circle": "gh/lucas42/lucos_repos",

@@ -9,6 +9,8 @@ services:
       - PORT
       - SYSTEM
       - ENVIRONMENT
+      - GITHUB_APP_ID
+      - GITHUB_APP_PEM
     volumes:
       - data:/data
     restart: always
