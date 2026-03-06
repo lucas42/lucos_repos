@@ -177,7 +177,7 @@ func TestFetchRepoTypes_SystemTakesPrecedenceOverComponent(t *testing.T) {
 // TestFetchRepos_SinglePage verifies basic repo fetching without pagination.
 func TestFetchRepos_SinglePage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/orgs/lucas42/repos" {
+		if r.URL.Path == "/users/lucas42/repos" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_photos"},
@@ -207,7 +207,7 @@ func TestFetchRepos_SinglePage(t *testing.T) {
 func TestFetchRepos_Pagination(t *testing.T) {
 	// Serve exactly 100 repos on page 1 (triggering a second request) and 3 on page 2.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/orgs/lucas42/repos" {
+		if r.URL.Path != "/users/lucas42/repos" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -272,7 +272,7 @@ func TestSweep_StoresFindings(t *testing.T) {
 	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/orgs/lucas42/repos":
+		case "/users/lucas42/repos":
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_photos"},
 			})
@@ -343,7 +343,7 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.URL.Path == "/orgs/lucas42/repos":
+		case r.URL.Path == "/users/lucas42/repos":
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_missing"},
 			})

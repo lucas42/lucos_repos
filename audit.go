@@ -43,7 +43,7 @@ type configyComponent struct {
 	ID string `json:"id"`
 }
 
-// gitHubRepo represents a single entry from the GitHub /orgs/{org}/repos endpoint.
+// gitHubRepo represents a single entry from the GitHub /users/{user}/repos endpoint.
 type gitHubRepo struct {
 	FullName string `json:"full_name"`
 }
@@ -242,7 +242,7 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 	const perPage = 100
 
 	for {
-		url := fmt.Sprintf("%s/orgs/%s/repos?per_page=%d&page=%d", s.githubAPIBaseURL, s.githubOrg, perPage, page)
+		url := fmt.Sprintf("%s/users/%s/repos?per_page=%d&page=%d", s.githubAPIBaseURL, s.githubOrg, perPage, page)
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build repos request: %w", err)
