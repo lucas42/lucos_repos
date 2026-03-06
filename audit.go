@@ -55,18 +55,22 @@ type AuditSweeper struct {
 	sweepInterval time.Duration
 
 	// Base URLs — overridable in tests.
-	configyBaseURL  string
+	configyBaseURL   string
 	githubAPIBaseURL string
 
-	mu                    sync.Mutex
-	lastSweepCompletedAt  time.Time
-	lastSweepErr          error
+	// issueClientFactory creates a GitHubIssueClient for a given token.
+	// Overridable in tests to inject a fake client.
+	issueClientFactory func(token string) *GitHubIssueClient
+
+	mu                   sync.Mutex
+	lastSweepCompletedAt time.Time
+	lastSweepErr         error
 }
 
 // NewAuditSweeper creates a new AuditSweeper. The sweeper does not start
 // automatically — call Start to begin the scheduled loop.
 func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient) *AuditSweeper {
-	return &AuditSweeper{
+	s := &AuditSweeper{
 		db:               db,
 		githubAuth:       githubAuth,
 		githubOrg:        "lucas42",
@@ -74,6 +78,10 @@ func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient) *AuditSweeper {
 		configyBaseURL:   configyBaseURL,
 		githubAPIBaseURL: githubAPIBaseURL,
 	}
+	s.issueClientFactory = func(token string) *GitHubIssueClient {
+		return NewGitHubIssueClient(s.githubAPIBaseURL, token)
+	}
+	return s
 }
 
 // Start runs an immediate sweep in a goroutine, then repeats every
@@ -136,6 +144,7 @@ func (s *AuditSweeper) sweep() error {
 	}
 
 	conventions := AllConventions()
+	issueClient := s.issueClientFactory(token)
 
 	for _, repoName := range repos {
 		repoType, ok := repoTypes[repoName]
@@ -162,7 +171,19 @@ func (s *AuditSweeper) sweep() error {
 			}
 
 			result := convention.Check(ctx)
-			if err := s.db.SaveFinding(result, repoName, ""); err != nil {
+
+			issueURL := ""
+			if !result.Pass {
+				// Ensure an open audit-finding issue exists for this violation.
+				var issueErr error
+				issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convention.ID, convention.Description)
+				if issueErr != nil {
+					slog.Warn("Failed to ensure issue exists for failing convention",
+						"repo", repoName, "convention", convention.ID, "error", issueErr)
+				}
+			}
+
+			if err := s.db.SaveFinding(result, repoName, issueURL); err != nil {
 				slog.Warn("Failed to save finding", "repo", repoName, "convention", convention.ID, "error", err)
 			}
 		}
