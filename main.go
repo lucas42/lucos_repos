@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 )
 
 type InfoResponse struct {
@@ -22,6 +23,7 @@ type InfoResponse struct {
 type Check struct {
 	OK         bool   `json:"ok"`
 	TechDetail string `json:"techDetail"`
+	Debug      string `json:"debug,omitempty"`
 }
 
 func main() {
@@ -58,6 +60,9 @@ func main() {
 	}
 	slog.Info("Conventions synced to database", "count", len(AllConventions()))
 
+	sweeper := NewAuditSweeper(db, githubAuth)
+	sweeper.Start()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /_info", func(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +73,7 @@ func main() {
 		}
 		if tokenErr != nil {
 			slog.Warn("GitHub auth check failed", "error", tokenErr)
+			githubAuthCheck.Debug = tokenErr.Error()
 		}
 
 		// Probe the database with a minimal query.
@@ -78,13 +84,32 @@ func main() {
 		dbCheck.OK = dbErr == nil
 		if dbErr != nil {
 			slog.Warn("Database check failed", "error", dbErr)
+			dbCheck.Debug = dbErr.Error()
+		}
+
+		// Report the last audit sweep status.
+		completedAt, sweepErr := sweeper.Status()
+		auditCheck := Check{
+			TechDetail: "Checks whether the last scheduled audit sweep completed successfully",
+		}
+		if sweepErr != nil {
+			auditCheck.OK = false
+			auditCheck.Debug = sweepErr.Error()
+		} else if completedAt.IsZero() {
+			// First sweep hasn't finished yet — not an error, just not ready.
+			auditCheck.OK = false
+			auditCheck.Debug = "No sweep has completed yet"
+		} else {
+			auditCheck.OK = true
+			auditCheck.Debug = "Last sweep completed at " + completedAt.UTC().Format(time.RFC3339)
 		}
 
 		info := InfoResponse{
 			System: system,
 			Checks: map[string]any{
-				"github-auth": githubAuthCheck,
-				"database":    dbCheck,
+				"github-auth":   githubAuthCheck,
+				"database":      dbCheck,
+				"last-audit-completed": auditCheck,
 			},
 			Metrics: map[string]any{},
 			CI: map[string]string{
