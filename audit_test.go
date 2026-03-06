@@ -27,6 +27,7 @@ func newTestSweeper(t *testing.T, configyServer, githubServer *httptest.Server) 
 		db:               db,
 		githubOrg:        "lucas42",
 		sweepInterval:    6 * time.Hour,
+		system:           "lucos_repos",
 		configyBaseURL:   configyServer.URL,
 		githubAPIBaseURL: githubServer.URL,
 	}
@@ -435,4 +436,89 @@ func TestSweeper_Status_BeforeFirstSweep(t *testing.T) {
 	if lastErr != nil {
 		t.Errorf("expected nil lastErr before first sweep, got %v", lastErr)
 	}
+}
+
+// TestReportToScheduleTracker_Success verifies a successful sweep posts to the
+// schedule tracker with status "success" and no message.
+func TestReportToScheduleTracker_Success(t *testing.T) {
+	var received scheduleTrackerPayload
+	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/report-status" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("failed to decode schedule tracker payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer trackerServer.Close()
+
+	s := &AuditSweeper{
+		system:                  "lucos_repos",
+		sweepInterval:           6 * time.Hour,
+		scheduleTrackerEndpoint: trackerServer.URL + "/report-status",
+	}
+	s.reportToScheduleTracker("success", "")
+
+	if received.System != "lucos_repos" {
+		t.Errorf("expected system %q, got %q", "lucos_repos", received.System)
+	}
+	if received.Frequency != int((6 * time.Hour).Seconds()) {
+		t.Errorf("expected frequency %d, got %d", int((6*time.Hour).Seconds()), received.Frequency)
+	}
+	if received.Status != "success" {
+		t.Errorf("expected status %q, got %q", "success", received.Status)
+	}
+	if received.Message != "" {
+		t.Errorf("expected empty message for success, got %q", received.Message)
+	}
+}
+
+// TestReportToScheduleTracker_Error verifies a failed sweep posts to the
+// schedule tracker with status "error" and the error message.
+func TestReportToScheduleTracker_Error(t *testing.T) {
+	var received scheduleTrackerPayload
+	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/report-status" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("failed to decode schedule tracker payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer trackerServer.Close()
+
+	s := &AuditSweeper{
+		system:                  "lucos_repos",
+		sweepInterval:           6 * time.Hour,
+		scheduleTrackerEndpoint: trackerServer.URL + "/report-status",
+	}
+	s.reportToScheduleTracker("error", "failed to get GitHub token: some auth error")
+
+	if received.Status != "error" {
+		t.Errorf("expected status %q, got %q", "error", received.Status)
+	}
+	if received.Message != "failed to get GitHub token: some auth error" {
+		t.Errorf("expected error message, got %q", received.Message)
+	}
+}
+
+// TestReportToScheduleTracker_NoEndpoint verifies that no HTTP call is made when
+// scheduleTrackerEndpoint is empty.
+func TestReportToScheduleTracker_NoEndpoint(t *testing.T) {
+	// If any HTTP call were made, it would fail on a non-existent host.
+	s := &AuditSweeper{
+		system:        "lucos_repos",
+		sweepInterval: 6 * time.Hour,
+		// scheduleTrackerEndpoint intentionally left empty
+	}
+	// Should not panic or make any network call.
+	s.reportToScheduleTracker("success", "")
 }

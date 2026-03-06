@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,16 +48,26 @@ type gitHubRepo struct {
 	FullName string `json:"full_name"`
 }
 
+// scheduleTrackerPayload is the JSON body sent to the schedule tracker endpoint.
+type scheduleTrackerPayload struct {
+	System    string `json:"system"`
+	Frequency int    `json:"frequency"`
+	Status    string `json:"status"`
+	Message   string `json:"message,omitempty"`
+}
+
 // AuditSweeper orchestrates scheduled full sweeps of all known repos.
 type AuditSweeper struct {
 	db            *DB
 	githubAuth    *GitHubAuthClient
 	githubOrg     string
 	sweepInterval time.Duration
+	system        string
 
 	// Base URLs — overridable in tests.
-	configyBaseURL   string
-	githubAPIBaseURL string
+	configyBaseURL          string
+	githubAPIBaseURL        string
+	scheduleTrackerEndpoint string
 
 	// issueClientFactory creates a GitHubIssueClient for a given token.
 	// Overridable in tests to inject a fake client.
@@ -69,12 +80,13 @@ type AuditSweeper struct {
 
 // NewAuditSweeper creates a new AuditSweeper. The sweeper does not start
 // automatically — call Start to begin the scheduled loop.
-func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient) *AuditSweeper {
+func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient, system string) *AuditSweeper {
 	s := &AuditSweeper{
 		db:               db,
 		githubAuth:       githubAuth,
 		githubOrg:        "lucas42",
 		sweepInterval:    6 * time.Hour,
+		system:           system,
 		configyBaseURL:   configyBaseURL,
 		githubAPIBaseURL: githubAPIBaseURL,
 	}
@@ -114,6 +126,7 @@ func (s *AuditSweeper) runSweep() {
 		s.mu.Lock()
 		s.lastSweepErr = err
 		s.mu.Unlock()
+		s.reportToScheduleTracker("error", err.Error())
 		return
 	}
 	slog.Info("Audit sweep completed successfully", "duration", time.Since(start))
@@ -121,6 +134,36 @@ func (s *AuditSweeper) runSweep() {
 	s.lastSweepCompletedAt = time.Now()
 	s.lastSweepErr = nil
 	s.mu.Unlock()
+	s.reportToScheduleTracker("success", "")
+}
+
+// reportToScheduleTracker posts the sweep outcome to the schedule tracker
+// endpoint if one is configured. Errors are logged but do not affect the sweep
+// result.
+func (s *AuditSweeper) reportToScheduleTracker(status, message string) {
+	if s.scheduleTrackerEndpoint == "" {
+		return
+	}
+	payload := scheduleTrackerPayload{
+		System:    s.system,
+		Frequency: int(s.sweepInterval.Seconds()),
+		Status:    status,
+		Message:   message,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		slog.Warn("Failed to marshal schedule tracker payload", "error", err)
+		return
+	}
+	resp, err := http.Post(s.scheduleTrackerEndpoint, "application/json", bytes.NewReader(body)) //nolint:gosec // URL comes from trusted config
+	if err != nil {
+		slog.Warn("Failed to POST to schedule tracker", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		slog.Warn("Schedule tracker returned non-2xx response", "status", resp.StatusCode)
+	}
 }
 
 // sweep fetches repos and configy data, then runs all conventions.
