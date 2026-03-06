@@ -56,6 +56,27 @@ func TestOpenDB_Idempotent(t *testing.T) {
 	db2.Close()
 }
 
+// TestPing_Open verifies that Ping succeeds on an open database.
+func TestPing_Open(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Ping(); err != nil {
+		t.Errorf("Ping on open database returned error: %v", err)
+	}
+}
+
+// TestPing_Closed verifies that Ping fails after the database is closed.
+func TestPing_Closed(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenDB(dir + "/test.db")
+	if err != nil {
+		t.Fatalf("OpenDB failed: %v", err)
+	}
+	db.Close()
+	if err := db.Ping(); err == nil {
+		t.Error("expected Ping to fail after Close, got nil")
+	}
+}
+
 // TestUpsertConvention_Insert verifies inserting a new convention.
 func TestUpsertConvention_Insert(t *testing.T) {
 	db := openTestDB(t)

@@ -44,6 +44,16 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
+// Ping confirms the database is accessible with a minimal query.
+// It is suitable for use in health checks where a full table scan would be wasteful.
+func (db *DB) Ping() error {
+	var dummy int
+	if err := db.conn.QueryRow("SELECT 1").Scan(&dummy); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+	return nil
+}
+
 // createSchema creates the database tables if they do not already exist.
 func (db *DB) createSchema() error {
 	schema := `

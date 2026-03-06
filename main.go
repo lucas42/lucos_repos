@@ -70,11 +70,11 @@ func main() {
 			slog.Warn("GitHub auth check failed", "error", tokenErr)
 		}
 
-		// Probe the database with a simple query.
+		// Probe the database with a minimal query.
 		dbCheck := Check{
 			TechDetail: "Checks whether the SQLite database is accessible",
 		}
-		_, dbErr := db.GetFindings()
+		dbErr := db.Ping()
 		dbCheck.OK = dbErr == nil
 		if dbErr != nil {
 			slog.Warn("Database check failed", "error", dbErr)
