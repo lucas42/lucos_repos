@@ -11,6 +11,7 @@ services:
       - ENVIRONMENT
       - GITHUB_APP_ID
       - GITHUB_APP_PEM
+      - SCHEDULE_TRACKER_ENDPOINT
     volumes:
       - data:/data
     restart: always

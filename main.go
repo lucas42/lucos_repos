@@ -60,7 +60,8 @@ func main() {
 	}
 	slog.Info("Conventions synced to database", "count", len(AllConventions()))
 
-	sweeper := NewAuditSweeper(db, githubAuth)
+	sweeper := NewAuditSweeper(db, githubAuth, system)
+	sweeper.scheduleTrackerEndpoint = os.Getenv("SCHEDULE_TRACKER_ENDPOINT")
 	sweeper.Start()
 
 	mux := http.NewServeMux()
