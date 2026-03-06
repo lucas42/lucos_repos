@@ -14,6 +14,13 @@ type RepoContext struct {
 
 	// GitHubToken is a valid GitHub App installation token for making API calls.
 	GitHubToken string
+
+	// Type is the repo's classification as determined by lucos_configy.
+	Type RepoType
+
+	// GitHubBaseURL is the base URL for GitHub API calls. Defaults to
+	// githubBaseURL ("https://api.github.com") when empty.
+	GitHubBaseURL string
 }
 
 // ConventionResult is the outcome of running a single convention against a repo.
@@ -36,8 +43,26 @@ type Convention struct {
 	// Description explains what the convention checks, in plain English.
 	Description string
 
+	// AppliesTo is the set of repo types this convention applies to. If empty,
+	// the convention applies to all repo types.
+	AppliesTo []RepoType
+
 	// Check runs the convention against a repo and returns the result.
 	Check func(repo RepoContext) ConventionResult
+}
+
+// AppliesToType reports whether the convention applies to the given repo type.
+// A convention with no AppliesTo set applies to every repo type.
+func (c Convention) AppliesToType(t RepoType) bool {
+	if len(c.AppliesTo) == 0 {
+		return true
+	}
+	for _, allowed := range c.AppliesTo {
+		if allowed == t {
+			return true
+		}
+	}
+	return false
 }
 
 // registry holds all registered conventions. Conventions are added at init time
@@ -104,7 +129,11 @@ func init() {
 		ID:          "has-circleci-config",
 		Description: "Repository has a .circleci/config.yml file",
 		Check: func(repo RepoContext) ConventionResult {
-			exists, err := githubFileExists(repo.GitHubToken, repo.Name, ".circleci/config.yml")
+			base := repo.GitHubBaseURL
+			if base == "" {
+				base = githubBaseURL
+			}
+			exists, err := githubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".circleci/config.yml")
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "has-circleci-config", "repo", repo.Name, "error", err)
 				return ConventionResult{
