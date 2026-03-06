@@ -99,7 +99,8 @@ func (c *GitHubIssueClient) findMostRecentClosedIssue(repo, title string) (strin
 // Returns the HTML URL of the first (most recent) matching issue, or "" if none.
 func (c *GitHubIssueClient) searchIssues(repo, title, state string) (string, error) {
 	// GitHub Search API: search within the specific repo, filtering by label, state, and title.
-	query := fmt.Sprintf("repo:%s label:%s is:%s is:issue in:title %s", repo, auditFindingLabel, state, url.QueryEscape(title))
+	// Do not pre-encode the title — let the single url.QueryEscape(query) below handle all encoding.
+	query := fmt.Sprintf("repo:%s label:%s is:%s is:issue in:title %s", repo, auditFindingLabel, state, title)
 	searchURL := fmt.Sprintf("%s/search/issues?q=%s&per_page=1&sort=updated&order=desc", c.baseURL, url.QueryEscape(query))
 
 	req, err := http.NewRequest("GET", searchURL, nil)

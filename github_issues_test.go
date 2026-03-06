@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,10 @@ func TestEnsureIssueExists_OpenIssueAlreadyExists(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
+			if !strings.Contains(q, title) {
+				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(buildSearchResponse([]gitHubIssue{
 				{Number: 5, HTMLURL: existingURL, Title: title, State: "open"},
@@ -65,6 +70,10 @@ func TestEnsureIssueExists_CreatesNewIssue(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
+			if !strings.Contains(q, title) {
+				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
+			}
 			// No issues found — return empty result.
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(buildSearchResponse([]gitHubIssue{}))
@@ -129,9 +138,12 @@ func TestEnsureIssueExists_ReferencesClosedIssue(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
-			state := r.URL.Query().Get("q")
+			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
+			if !strings.Contains(q, title) {
+				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
+			}
 			w.Header().Set("Content-Type", "application/json")
-			if strings.Contains(state, "is:open") {
+			if strings.Contains(q, "is:open") {
 				// No open issues.
 				w.Write(buildSearchResponse([]gitHubIssue{}))
 			} else {
@@ -185,6 +197,10 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
+			if !strings.Contains(q, title) {
+				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			// Return a result with a different title — should be filtered out.
 			w.Write(buildSearchResponse([]gitHubIssue{
@@ -219,9 +235,15 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 // TestEnsureIssueExists_CreateError verifies that a GitHub API error during
 // issue creation propagates as an error.
 func TestEnsureIssueExists_CreateError(t *testing.T) {
+	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
+			if !strings.Contains(q, title) {
+				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(buildSearchResponse([]gitHubIssue{}))
 		case r.Method == "POST":
