@@ -169,7 +169,11 @@ func (db *DB) GetFindings() ([]FindingRow, error) {
 		f.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAtStr)
 		if err != nil {
 			// Try alternative format SQLite may use.
-			f.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAtStr)
+			var err2 error
+			f.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAtStr)
+			if err2 != nil {
+				return nil, fmt.Errorf("failed to parse updated_at %q: %w", updatedAtStr, err)
+			}
 		}
 		findings = append(findings, f)
 	}
