@@ -127,6 +127,19 @@ func main() {
 		}
 	})
 
+	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
+		report, err := db.GetStatusReport()
+		if err != nil {
+			slog.Error("Failed to build status report", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(report); err != nil {
+			slog.Error("Failed to encode /api/status response", "error", err)
+		}
+	})
+
 	slog.Info("Server listening", "port", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		slog.Error("Server failed", "error", err)
