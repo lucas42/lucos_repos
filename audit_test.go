@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +12,8 @@ import (
 // newTestSweeper creates an AuditSweeper wired to a temporary DB with its
 // base URLs pointing at fake test servers. The githubAuth field is nil — tests
 // that exercise sweep() must inject a token some other way.
+// The issueClientFactory defaults to using the githubServer URL, so the same
+// fake server handles both convention-check and issue-management calls.
 func newTestSweeper(t *testing.T, configyServer, githubServer *httptest.Server) *AuditSweeper {
 	t.Helper()
 	db := openTestDB(t)
@@ -26,6 +29,9 @@ func newTestSweeper(t *testing.T, configyServer, githubServer *httptest.Server) 
 		sweepInterval:    6 * time.Hour,
 		configyBaseURL:   configyServer.URL,
 		githubAPIBaseURL: githubServer.URL,
+	}
+	s.issueClientFactory = func(token string) *GitHubIssueClient {
+		return NewGitHubIssueClient(githubServer.URL, token)
 	}
 	return s
 }
@@ -322,6 +328,100 @@ func TestSweep_StoresFindings(t *testing.T) {
 	}
 	if !found {
 		t.Error("no finding for has-circleci-config on lucos_photos")
+	}
+}
+
+// TestSweep_FailingConventionCreatesIssue verifies that when a convention fails,
+// the sweep creates an issue and stores its URL in the findings table.
+func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
+	const issueURL = "https://github.com/lucas42/lucos_missing/issues/1"
+	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
+	issueCreated := false
+
+	// Fake GitHub API: one repo with NO circleci config file, plus issue search/create endpoints.
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/orgs/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_missing"},
+			})
+		case r.URL.Path == "/repos/lucas42/lucos_missing/contents/.circleci/config.yml":
+			// File does not exist — convention fails.
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+			// No existing issues.
+			json.NewEncoder(w).Encode(searchIssuesResponse{TotalCount: 0, Items: []gitHubIssue{}})
+		case r.Method == "POST" && r.URL.Path == "/repos/lucas42/lucos_missing/issues":
+			issueCreated = true
+			var payload createIssueRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("failed to decode create issue request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if payload.Title != title {
+				t.Errorf("expected issue title %q, got %q", title, payload.Title)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(gitHubIssue{
+				Number:  1,
+				HTMLURL: issueURL,
+				Title:   title,
+				State:   "open",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	// Fake configy: lucos_missing is a system.
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_missing"}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("sweep() returned error: %v", err)
+	}
+
+	if !issueCreated {
+		t.Error("expected an issue to be created for the failing convention, but POST was never called")
+	}
+
+	findings, err := s.db.GetFindings()
+	if err != nil {
+		t.Fatalf("GetFindings failed: %v", err)
+	}
+
+	var found bool
+	for _, f := range findings {
+		if f.Repo == "lucas42/lucos_missing" && f.Convention == "has-circleci-config" {
+			found = true
+			if f.Pass {
+				t.Error("expected finding to fail for lucos_missing")
+			}
+			if f.IssueURL != issueURL {
+				t.Errorf("expected IssueURL %q, got %q", issueURL, f.IssueURL)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("no finding for has-circleci-config on lucos_missing")
 	}
 }
 
