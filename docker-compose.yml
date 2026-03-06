@@ -1,8 +1,8 @@
 services:
   lucos_repos:
     build: .
-    container_name: lucos_repos
-    image: lucas42/lucos_repos
+    container_name: lucos_repos_app
+    image: lucas42/lucos_repos_app
     ports:
       - ${PORT}:${PORT}
     environment:

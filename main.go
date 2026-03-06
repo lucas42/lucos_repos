@@ -42,6 +42,22 @@ func main() {
 		os.Exit(2)
 	}
 
+	dbPath := "/data/lucos_repos.db"
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		slog.Error("Failed to open database", "path", dbPath, "error", err)
+		os.Exit(2)
+	}
+	defer db.Close()
+
+	// Sync all registered conventions into the database on startup.
+	for _, c := range AllConventions() {
+		if err := db.UpsertConvention(c.ID, c.Description); err != nil {
+			slog.Warn("Failed to sync convention to database", "convention", c.ID, "error", err)
+		}
+	}
+	slog.Info("Conventions synced to database", "count", len(AllConventions()))
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /_info", func(w http.ResponseWriter, r *http.Request) {
@@ -54,10 +70,21 @@ func main() {
 			slog.Warn("GitHub auth check failed", "error", tokenErr)
 		}
 
+		// Probe the database with a minimal query.
+		dbCheck := Check{
+			TechDetail: "Checks whether the SQLite database is accessible",
+		}
+		dbErr := db.Ping()
+		dbCheck.OK = dbErr == nil
+		if dbErr != nil {
+			slog.Warn("Database check failed", "error", dbErr)
+		}
+
 		info := InfoResponse{
 			System: system,
 			Checks: map[string]any{
 				"github-auth": githubAuthCheck,
+				"database":    dbCheck,
 			},
 			Metrics: map[string]any{},
 			CI: map[string]string{
