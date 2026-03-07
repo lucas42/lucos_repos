@@ -31,6 +31,11 @@ type configyComponent struct {
 	ID string `json:"id"`
 }
 
+// configyScript represents a single entry from the configy /scripts endpoint.
+type configyScript struct {
+	ID string `json:"id"`
+}
+
 // gitHubRepo represents a single entry from the GitHub /users/{user}/repos endpoint.
 type gitHubRepo struct {
 	FullName string `json:"full_name"`
@@ -277,8 +282,8 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 	return allRepos, nil
 }
 
-// fetchRepoTypes fetches systems and components from lucos_configy and returns
-// a map of repo full_name (e.g. "lucas42/lucos_photos") to RepoType.
+// fetchRepoTypes fetches systems, components, and scripts from lucos_configy
+// and returns a map of repo full_name (e.g. "lucas42/lucos_photos") to RepoType.
 func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error) {
 	result := map[string]conventions.RepoType{}
 
@@ -298,6 +303,17 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error)
 		// A repo that is both a system and a component keeps its system type.
 		if _, exists := result[s.githubOrg+"/"+comp.ID]; !exists {
 			result[s.githubOrg+"/"+comp.ID] = conventions.RepoTypeComponent
+		}
+	}
+
+	scripts, err := s.fetchConfigyScripts()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch configy scripts: %w", err)
+	}
+	for _, script := range scripts {
+		// A repo that is already classified (e.g. as a system) keeps its existing type.
+		if _, exists := result[s.githubOrg+"/"+script.ID]; !exists {
+			result[s.githubOrg+"/"+script.ID] = conventions.RepoTypeScript
 		}
 	}
 
@@ -342,4 +358,24 @@ func (s *AuditSweeper) fetchConfigyComponents() ([]configyComponent, error) {
 		return nil, fmt.Errorf("failed to decode configy components: %w", err)
 	}
 	return components, nil
+}
+
+// fetchConfigyScripts fetches the list of scripts from the configy API.
+func (s *AuditSweeper) fetchConfigyScripts() ([]configyScript, error) {
+	url := s.configyBaseURL + "/scripts"
+	resp, err := http.Get(url) //nolint:gosec // URL comes from trusted config
+	if err != nil {
+		return nil, fmt.Errorf("configy scripts request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("configy /scripts returned %d", resp.StatusCode)
+	}
+
+	var scripts []configyScript
+	if err := json.NewDecoder(resp.Body).Decode(&scripts); err != nil {
+		return nil, fmt.Errorf("failed to decode configy scripts: %w", err)
+	}
+	return scripts, nil
 }
