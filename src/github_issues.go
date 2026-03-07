@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 )
 
 // auditFindingLabel is the label applied to all issues raised by the audit tool.
@@ -26,12 +25,6 @@ type gitHubIssue struct {
 	HTMLURL string `json:"html_url"`
 	Title   string `json:"title"`
 	State   string `json:"state"`
-}
-
-// searchIssuesResponse represents the GitHub search API response.
-type searchIssuesResponse struct {
-	TotalCount int           `json:"total_count"`
-	Items      []gitHubIssue `json:"items"`
 }
 
 // GitHubIssueClient handles creating and searching for audit-finding issues on GitHub repos.
@@ -91,31 +84,54 @@ func (c *GitHubIssueClient) EnsureIssueExists(repo string, conv ConventionInfo) 
 	return newURL, nil
 }
 
-// findOpenIssue searches for an open issue with the audit-finding label and the
-// given title on the given repo. Returns the HTML URL if found, or "" if not.
+// findOpenIssue fetches open issues with the audit-finding label on the given repo
+// and returns the HTML URL of the first one whose title matches exactly, or "" if none.
 func (c *GitHubIssueClient) findOpenIssue(repo, title string) (string, error) {
-	return c.searchIssues(repo, title, "open")
-}
+	// Issues List API: fetch all open audit-finding issues, then filter locally for exact title.
+	// per_page=100 is the maximum; pagination is not needed in practice since there should be
+	// at most one open audit-finding issue per convention per repo.
+	listURL := fmt.Sprintf("%s/repos/%s/issues?labels=%s&state=open&per_page=100", c.baseURL, repo, auditFindingLabel)
 
-// findMostRecentClosedIssue searches for the most recently closed audit-finding
-// issue with the given title on the given repo. Returns the HTML URL if found,
-// or "" if not.
-func (c *GitHubIssueClient) findMostRecentClosedIssue(repo, title string) (string, error) {
-	return c.searchIssues(repo, title, "closed")
-}
-
-// searchIssues searches for issues with the audit-finding label and matching
-// title on the given repo. state should be "open" or "closed".
-// Returns the HTML URL of the first (most recent) matching issue, or "" if none.
-func (c *GitHubIssueClient) searchIssues(repo, title, state string) (string, error) {
-	// GitHub Search API: search within the specific repo, filtering by label, state, and title.
-	// Do not pre-encode the title — let the single url.QueryEscape(query) below handle all encoding.
-	query := fmt.Sprintf("repo:%s label:%s is:%s is:issue in:title %s", repo, auditFindingLabel, state, title)
-	searchURL := fmt.Sprintf("%s/search/issues?q=%s&per_page=1&sort=updated&order=desc", c.baseURL, url.QueryEscape(query))
-
-	req, err := http.NewRequest("GET", searchURL, nil)
+	issues, err := c.fetchIssuesList(listURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to build search request: %w", err)
+		return "", fmt.Errorf("failed to list open issues: %w", err)
+	}
+
+	for _, issue := range issues {
+		if issue.Title == title {
+			return issue.HTMLURL, nil
+		}
+	}
+	return "", nil
+}
+
+// findMostRecentClosedIssue fetches the most recently updated closed audit-finding
+// issues on the given repo and returns the HTML URL of the first one whose title
+// matches exactly, or "" if none.
+func (c *GitHubIssueClient) findMostRecentClosedIssue(repo, title string) (string, error) {
+	// Issues List API: fetch closed audit-finding issues sorted by most recently updated.
+	// per_page=100 gives us a broad window to find the matching title without pagination.
+	listURL := fmt.Sprintf("%s/repos/%s/issues?labels=%s&state=closed&sort=updated&direction=desc&per_page=100", c.baseURL, repo, auditFindingLabel)
+
+	issues, err := c.fetchIssuesList(listURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to list closed issues: %w", err)
+	}
+
+	for _, issue := range issues {
+		if issue.Title == title {
+			return issue.HTMLURL, nil
+		}
+	}
+	return "", nil
+}
+
+// fetchIssuesList performs a GET request to the given Issues List API URL and
+// returns the decoded slice of issues.
+func (c *GitHubIssueClient) fetchIssuesList(listURL string) ([]gitHubIssue, error) {
+	req, err := http.NewRequest("GET", listURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build issues list request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -123,35 +139,24 @@ func (c *GitHubIssueClient) searchIssues(repo, title, state string) (string, err
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("GitHub search request failed: %w", err)
+		return nil, fmt.Errorf("GitHub issues list request failed: %w", err)
 	}
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		return "", fmt.Errorf("failed to read search response: %w", err)
+		return nil, fmt.Errorf("failed to read issues list response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub search API returned %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("GitHub issues list API returned %d: %s", resp.StatusCode, body)
 	}
 
-	var result searchIssuesResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("failed to decode search response: %w", err)
+	var issues []gitHubIssue
+	if err := json.Unmarshal(body, &issues); err != nil {
+		return nil, fmt.Errorf("failed to decode issues list response: %w", err)
 	}
 
-	if result.TotalCount == 0 || len(result.Items) == 0 {
-		return "", nil
-	}
-
-	// Return the most recent match — but only if the title matches exactly
-	// (the search API does substring matching, so we must verify).
-	for _, issue := range result.Items {
-		if issue.Title == title {
-			return issue.HTMLURL, nil
-		}
-	}
-	return "", nil
+	return issues, nil
 }
 
 // createIssueRequest is the JSON body for creating a GitHub issue.
