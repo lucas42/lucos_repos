@@ -70,6 +70,11 @@ func main() {
 
 	mux.HandleFunc("GET /", newDashboardHandler(db))
 
+	mux.HandleFunc("GET /lucos_navbar.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		http.ServeFile(w, r, "/app/lucos_navbar.js")
+	})
+
 	mux.HandleFunc("GET /_info", func(w http.ResponseWriter, r *http.Request) {
 		_, tokenErr := githubAuth.GetInstallationToken()
 		githubAuthCheck := Check{

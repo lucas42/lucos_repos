@@ -1,3 +1,5 @@
+FROM lucas42/lucos_navbar AS navbar
+
 FROM golang:1.26 AS builder
 
 WORKDIR /go/src/lucos_repos
@@ -18,5 +20,6 @@ WORKDIR /app
 RUN mkdir -p /data
 
 COPY --from=builder /go/src/lucos_repos/lucos_repos .
+COPY --from=navbar lucos_navbar.js .
 
 CMD ["./lucos_repos"]
