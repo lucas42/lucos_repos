@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Repos Compliance Dashboard</title>
+	<style>
+		body {
+			font-family: system-ui, sans-serif;
+			margin: 0;
+			padding: 0;
+			background: #f8f9fa;
+			color: #212529;
+		}
+		main {
+			padding: 1.5rem 2rem;
+			overflow-x: auto;
+		}
+		h1 {
+			margin-top: 0;
+			margin-bottom: 1rem;
+		}
+		.summary {
+			display: flex;
+			gap: 1.5rem;
+			margin-bottom: 1.5rem;
+			flex-wrap: wrap;
+		}
+		.stat-card {
+			background: #fff;
+			border: 1px solid #dee2e6;
+			border-radius: 8px;
+			padding: 1rem 1.5rem;
+			min-width: 140px;
+		}
+		.stat-card .label {
+			font-size: 0.8rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: #6c757d;
+			margin-bottom: 0.25rem;
+		}
+		.stat-card .value {
+			font-size: 1.75rem;
+			font-weight: 700;
+			line-height: 1;
+		}
+		.stat-card.good .value { color: #198754; }
+		.stat-card.bad  .value { color: #dc3545; }
+		.stat-card.neutral .value { color: #0d6efd; }
+		table {
+			border-collapse: collapse;
+			background: #fff;
+			border: 1px solid #dee2e6;
+			border-radius: 8px;
+			overflow: hidden;
+			min-width: 100%;
+		}
+		th, td {
+			border: 1px solid #dee2e6;
+			padding: 0.5rem 0.75rem;
+			text-align: left;
+			white-space: nowrap;
+		}
+		thead th {
+			background: #343a40;
+			color: #fff;
+			font-size: 0.75rem;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+		thead th.convention-header {
+			writing-mode: vertical-rl;
+			transform: rotate(180deg);
+			max-width: 2rem;
+			padding: 0.75rem 0.4rem;
+			font-size: 0.7rem;
+		}
+		tbody tr:nth-child(even) {
+			background: #f8f9fa;
+		}
+		tbody tr:hover {
+			background: #e9ecef;
+		}
+		.repo-name {
+			font-family: monospace;
+			font-size: 0.85rem;
+		}
+		.cell-pass {
+			background: #d1e7dd;
+			color: #0a3622;
+			text-align: center;
+			font-weight: bold;
+		}
+		.cell-fail {
+			background: #f8d7da;
+			color: #58151c;
+			text-align: center;
+			font-weight: bold;
+		}
+		.cell-pass a,
+		.cell-fail a {
+			color: inherit;
+			text-decoration: none;
+		}
+		.cell-pass a:hover,
+		.cell-fail a:hover {
+			text-decoration: underline;
+		}
+		.cell-na {
+			background: #f0f0f0;
+			color: #adb5bd;
+			text-align: center;
+		}
+		.compliance-badge {
+			display: inline-block;
+			padding: 0.2em 0.5em;
+			border-radius: 4px;
+			font-size: 0.75rem;
+			font-weight: 600;
+		}
+		.badge-compliant { background: #d1e7dd; color: #0a3622; }
+		.badge-violations { background: #f8d7da; color: #58151c; }
+	</style>
+</head>
+<body>
+	<lucos-navbar>Repos</lucos-navbar>
+	<main>
+		<div class="summary">
+			<div class="stat-card neutral">
+				<div class="label">Total Repos</div>
+				<div class="value">{{.Summary.TotalRepos}}</div>
+			</div>
+			<div class="stat-card good">
+				<div class="label">Compliant</div>
+				<div class="value">{{.Summary.CompliantRepos}}</div>
+			</div>
+			<div class="stat-card bad">
+				<div class="label">Violations</div>
+				<div class="value">{{.Summary.TotalViolations}}</div>
+			</div>
+			<div class="stat-card {{if eq .Summary.TotalRepos 0}}neutral{{else if eq .Summary.TotalRepos .Summary.CompliantRepos}}good{{else}}bad{{end}}">
+				<div class="label">Compliance %</div>
+				<div class="value">{{.CompliancePct}}%</div>
+			</div>
+		</div>
+
+		{{if eq (len .Repos) 0}}
+		<p>No data yet — waiting for first audit sweep to complete.</p>
+		{{else}}
+		<table>
+			<thead>
+				<tr>
+					<th>Repository</th>
+					<th>Status</th>
+					{{range .Conventions}}
+					<th class="convention-header" title="{{.}}">{{.}}</th>
+					{{end}}
+				</tr>
+			</thead>
+			<tbody>
+				{{range .Repos}}
+				<tr>
+					<td class="repo-name">{{.Name}}</td>
+					<td>
+						{{if .Compliant}}
+						<span class="compliance-badge badge-compliant">Compliant</span>
+						{{else}}
+						<span class="compliance-badge badge-violations">Violations</span>
+						{{end}}
+					</td>
+					{{range .Cells}}
+					{{if .Present}}
+					<td class="{{if .Pass}}cell-pass{{else}}cell-fail{{end}}" title="{{.Detail}}">
+						{{if and (not .Pass) .IssueURL}}
+						<a href="{{.IssueURL}}" target="_blank" rel="noopener">&#x2717;</a>
+						{{else if .Pass}}
+						&#x2713;
+						{{else}}
+						&#x2717;
+						{{end}}
+					</td>
+					{{else}}
+					<td class="cell-na" title="Not applicable">&#x2013;</td>
+					{{end}}
+					{{end}}
+				</tr>
+				{{end}}
+			</tbody>
+		</table>
+		{{end}}
+	</main>
+	<script src="/lucos_navbar.js" type="text/javascript"></script>
+</body>
+</html>
