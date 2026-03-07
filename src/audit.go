@@ -231,6 +231,7 @@ func (s *AuditSweeper) sweep() error {
 					Description: convention.Description,
 					Rationale:   convention.Rationale,
 					Guidance:    convention.Guidance,
+					Detail:      result.Detail,
 				}
 				var issueErr error
 				issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
