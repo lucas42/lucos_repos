@@ -167,6 +167,8 @@ func (s *AuditSweeper) reportToScheduleTracker(status, message string) {
 }
 
 // sweep fetches repos and configy data, then runs all conventions.
+// It returns an error if any convention checks were skipped due to API errors,
+// so that callers can report a degraded (rather than successful) status.
 func (s *AuditSweeper) sweep() error {
 	token, err := s.githubAuth.GetInstallationToken()
 	if err != nil {
@@ -188,6 +190,11 @@ func (s *AuditSweeper) sweep() error {
 
 	allConventions := conventions.All()
 	issueClient := s.issueClientFactory(token)
+
+	// skippedCount tracks convention checks that could not be fully processed
+	// due to API errors (e.g. rate limiting). A non-zero count means the sweep
+	// has incomplete coverage and should not be reported as successful.
+	skippedCount := 0
 
 	for _, repoName := range repos {
 		info, ok := repoInfos[repoName]
@@ -230,6 +237,7 @@ func (s *AuditSweeper) sweep() error {
 				if issueErr != nil {
 					slog.Warn("Failed to ensure issue exists for failing convention",
 						"repo", repoName, "convention", convention.ID, "error", issueErr)
+					skippedCount++
 				}
 			}
 
@@ -239,6 +247,9 @@ func (s *AuditSweeper) sweep() error {
 		}
 	}
 
+	if skippedCount > 0 {
+		return fmt.Errorf("sweep incomplete: %d convention check(s) skipped due to API errors", skippedCount)
+	}
 	return nil
 }
 

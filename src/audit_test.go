@@ -694,3 +694,104 @@ func TestReportToScheduleTracker_NoEndpoint(t *testing.T) {
 	// Should not panic or make any network call.
 	s.reportToScheduleTracker("success", "")
 }
+
+// TestSweep_IssueAPIErrorReturnsError verifies that when EnsureIssueExists
+// fails for one or more convention checks (e.g. due to rate limiting), sweep()
+// returns a non-nil error rather than silently reporting success.
+func TestSweep_IssueAPIErrorReturnsError(t *testing.T) {
+	// Fake GitHub API: one repo with NO circleci config file (so conventions
+	// fail and the issue API is invoked), plus an issue list endpoint that
+	// returns 403 to simulate rate limiting.
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_failing"},
+			})
+		case r.URL.Path == "/repos/lucas42/lucos_failing/contents/.circleci/config.yml":
+			// File absent — all circleci conventions fail.
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_failing/issues"):
+			// Simulate rate limiting on the issue API.
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"message":"API rate limit exceeded"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	// Fake configy: lucos_failing is a system with no configured hosts.
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_failing", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	err := s.sweep()
+	if err == nil {
+		t.Fatal("expected sweep() to return an error when issue API calls fail, got nil")
+	}
+	if !strings.Contains(err.Error(), "skipped") {
+		t.Errorf("expected error message to mention skipped checks, got: %q", err.Error())
+	}
+}
+
+// TestSweep_FullSuccessReturnsNil verifies that sweep() returns nil when all
+// repos and conventions are processed without any API errors.
+func TestSweep_FullSuccessReturnsNil(t *testing.T) {
+	// Fake GitHub API: one repo with a valid circleci config (all conventions pass,
+	// no issue API calls needed).
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_clean"},
+			})
+		case "/repos/lucas42/lucos_clean/contents/.circleci/config.yml":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(encodedCIConfig()))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	// Fake configy: lucos_clean is a system with no configured hosts.
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_clean", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("expected sweep() to return nil for a full successful sweep, got: %v", err)
+	}
+}
