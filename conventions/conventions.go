@@ -1,6 +1,7 @@
 package conventions
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,7 +104,7 @@ func All() []Convention {
 }
 
 // GitHubBaseURL is the base URL for the GitHub API. It can be overridden in
-// tests using GitHubFileExistsFromBase.
+// tests using GitHubFileExistsFromBase or GitHubRequiredStatusChecksFromBase.
 const GitHubBaseURL = "https://api.github.com"
 
 // GitHubFileExists checks whether a file exists in a GitHub repository at the
@@ -141,5 +142,61 @@ func GitHubFileExistsFromBase(baseURL, token, repo, path string) (bool, error) {
 		return false, nil
 	default:
 		return false, fmt.Errorf("unexpected GitHub API status %d for %s in %s", resp.StatusCode, path, repo)
+	}
+}
+
+// branchProtectionResponse is the subset of the GitHub branch protection API
+// response that we care about.
+type branchProtectionResponse struct {
+	RequiredStatusChecks *struct {
+		Contexts []string `json:"contexts"`
+	} `json:"required_status_checks"`
+}
+
+// GitHubRequiredStatusChecks returns the list of required status check names
+// configured on the given branch's protection rules. It returns an empty slice
+// if the branch is unprotected (404) or has no required status checks.
+func GitHubRequiredStatusChecks(token, repo, branch string) ([]string, error) {
+	return GitHubRequiredStatusChecksFromBase(GitHubBaseURL, token, repo, branch)
+}
+
+// GitHubRequiredStatusChecksFromBase is the implementation of
+// GitHubRequiredStatusChecks with an injectable base URL, used by tests to
+// point at a fake server.
+func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/branches/%s/protection", baseURL, repo, branch)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// Branch is protected — parse the response.
+		var protection branchProtectionResponse
+		if err := json.NewDecoder(resp.Body).Decode(&protection); err != nil {
+			return nil, fmt.Errorf("failed to decode branch protection response: %w", err)
+		}
+		if protection.RequiredStatusChecks == nil {
+			return []string{}, nil
+		}
+		return protection.RequiredStatusChecks.Contexts, nil
+	case http.StatusNotFound:
+		// Branch is either unprotected or doesn't exist — treat as no checks.
+		return []string{}, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
 	}
 }
