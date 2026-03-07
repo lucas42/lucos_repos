@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -39,14 +40,15 @@ func newTestSweeper(t *testing.T, configyServer, githubServer *httptest.Server) 
 	return s
 }
 
-// TestFetchConfigySystems_Success verifies that systems are parsed correctly.
+// TestFetchConfigySystems_Success verifies that systems are parsed correctly,
+// including the hosts field.
 func TestFetchConfigySystems_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/systems" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode([]configySystem{
-				{ID: "lucos_photos"},
-				{ID: "lucos_notes"},
+				{ID: "lucos_photos", Hosts: []string{"avalon"}},
+				{ID: "lucos_media_linuxplayer", Hosts: []string{"xwing", "salvare"}},
 			})
 			return
 		}
@@ -65,8 +67,51 @@ func TestFetchConfigySystems_Success(t *testing.T) {
 	if systems[0].ID != "lucos_photos" {
 		t.Errorf("expected first system 'lucos_photos', got %q", systems[0].ID)
 	}
-	if systems[1].ID != "lucos_notes" {
-		t.Errorf("expected second system 'lucos_notes', got %q", systems[1].ID)
+	if len(systems[0].Hosts) != 1 || systems[0].Hosts[0] != "avalon" {
+		t.Errorf("expected lucos_photos to have hosts [avalon], got %v", systems[0].Hosts)
+	}
+	if systems[1].ID != "lucos_media_linuxplayer" {
+		t.Errorf("expected second system 'lucos_media_linuxplayer', got %q", systems[1].ID)
+	}
+	if len(systems[1].Hosts) != 2 {
+		t.Errorf("expected lucos_media_linuxplayer to have 2 hosts, got %v", systems[1].Hosts)
+	}
+}
+
+// TestFetchRepoTypes_SystemHostsPopulated verifies that hosts are propagated
+// from configy into the repoInfo for system repos.
+func TestFetchRepoTypes_SystemHostsPopulated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{
+				{ID: "lucos_router", Hosts: []string{"avalon", "xwing"}},
+			})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
+	infos, err := s.fetchRepoTypes()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	info, ok := infos["lucas42/lucos_router"]
+	if !ok {
+		t.Fatal("expected lucos_router to be present in infos map")
+	}
+	if info.Type != conventions.RepoTypeSystem {
+		t.Errorf("expected lucos_router to be system, got %q", info.Type)
+	}
+	if len(info.Hosts) != 2 || info.Hosts[0] != "avalon" || info.Hosts[1] != "xwing" {
+		t.Errorf("expected hosts [avalon xwing], got %v", info.Hosts)
 	}
 }
 
@@ -179,22 +224,22 @@ func TestFetchRepoTypes_ClassifiesCorrectly(t *testing.T) {
 	defer server.Close()
 
 	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
-	types, err := s.fetchRepoTypes()
+	infos, err := s.fetchRepoTypes()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if types["lucas42/lucos_photos"] != conventions.RepoTypeSystem {
-		t.Errorf("expected lucos_photos to be system, got %q", types["lucas42/lucos_photos"])
+	if infos["lucas42/lucos_photos"].Type != conventions.RepoTypeSystem {
+		t.Errorf("expected lucos_photos to be system, got %q", infos["lucas42/lucos_photos"].Type)
 	}
-	if types["lucas42/lucos_navbar"] != conventions.RepoTypeComponent {
-		t.Errorf("expected lucos_navbar to be component, got %q", types["lucas42/lucos_navbar"])
+	if infos["lucas42/lucos_navbar"].Type != conventions.RepoTypeComponent {
+		t.Errorf("expected lucos_navbar to be component, got %q", infos["lucas42/lucos_navbar"].Type)
 	}
-	if types["lucas42/lucos_agent"] != conventions.RepoTypeScript {
-		t.Errorf("expected lucos_agent to be script, got %q", types["lucas42/lucos_agent"])
+	if infos["lucas42/lucos_agent"].Type != conventions.RepoTypeScript {
+		t.Errorf("expected lucos_agent to be script, got %q", infos["lucas42/lucos_agent"].Type)
 	}
 	// A repo not in configy should be absent from the map.
-	if _, ok := types["lucas42/lucos_unknown"]; ok {
+	if _, ok := infos["lucas42/lucos_unknown"]; ok {
 		t.Error("expected lucos_unknown to be absent from types map")
 	}
 }
@@ -218,12 +263,12 @@ func TestFetchRepoTypes_DuplicateSystemAndComponent(t *testing.T) {
 	defer server.Close()
 
 	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
-	types, err := s.fetchRepoTypes()
+	infos, err := s.fetchRepoTypes()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if types["lucas42/lucos_shared"] != conventions.RepoTypeDuplicate {
-		t.Errorf("expected lucos_shared to be duplicate (listed in both systems and components), got %q", types["lucas42/lucos_shared"])
+	if infos["lucas42/lucos_shared"].Type != conventions.RepoTypeDuplicate {
+		t.Errorf("expected lucos_shared to be duplicate (listed in both systems and components), got %q", infos["lucas42/lucos_shared"].Type)
 	}
 }
 
@@ -246,12 +291,12 @@ func TestFetchRepoTypes_DuplicateSystemAndScript(t *testing.T) {
 	defer server.Close()
 
 	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
-	types, err := s.fetchRepoTypes()
+	infos, err := s.fetchRepoTypes()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if types["lucas42/lucos_shared"] != conventions.RepoTypeDuplicate {
-		t.Errorf("expected lucos_shared to be duplicate (listed in both systems and scripts), got %q", types["lucas42/lucos_shared"])
+	if infos["lucas42/lucos_shared"].Type != conventions.RepoTypeDuplicate {
+		t.Errorf("expected lucos_shared to be duplicate (listed in both systems and scripts), got %q", infos["lucas42/lucos_shared"].Type)
 	}
 }
 
@@ -274,12 +319,12 @@ func TestFetchRepoTypes_DuplicateComponentAndScript(t *testing.T) {
 	defer server.Close()
 
 	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
-	types, err := s.fetchRepoTypes()
+	infos, err := s.fetchRepoTypes()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if types["lucas42/lucos_shared"] != conventions.RepoTypeDuplicate {
-		t.Errorf("expected lucos_shared to be duplicate (listed in both components and scripts), got %q", types["lucas42/lucos_shared"])
+	if infos["lucas42/lucos_shared"].Type != conventions.RepoTypeDuplicate {
+		t.Errorf("expected lucos_shared to be duplicate (listed in both components and scripts), got %q", infos["lucas42/lucos_shared"].Type)
 	}
 }
 
@@ -375,9 +420,30 @@ func TestAppliesToType_Restricted(t *testing.T) {
 	}
 }
 
+// minimalValidCIConfig is a base64-encoded minimal CircleCI config that satisfies
+// all circleci-* conventions for a system with no configured hosts. It declares the
+// lucos deploy orb and includes a build job but no deploy jobs (matching a system
+// with zero hosts).
+const minimalValidCIConfig = `version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  version: 2
+  build:
+    jobs:
+      - lucos/build-amd64
+`
+
+// encodedCIConfig returns minimalValidCIConfig as a GitHub Contents API JSON
+// response, suitable for use as a fake server response.
+func encodedCIConfig() string {
+	import64 := base64.StdEncoding.EncodeToString([]byte(minimalValidCIConfig))
+	return `{"encoding":"base64","content":"` + import64 + `"}`
+}
+
 // TestSweep_StoresFindings verifies that a full sweep stores findings in the DB.
 func TestSweep_StoresFindings(t *testing.T) {
-	// Fake GitHub API: one repo, and the file exists for the circleci convention.
+	// Fake GitHub API: one repo, with a valid circleci config file.
 	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -387,19 +453,19 @@ func TestSweep_StoresFindings(t *testing.T) {
 			})
 		case "/repos/lucas42/lucos_photos/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"type":"file"}`))
+			w.Write([]byte(encodedCIConfig()))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer githubServer.Close()
 
-	// Fake configy: lucos_photos is a system.
+	// Fake configy: lucos_photos is a system with no configured hosts.
 	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/systems":
-			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_photos"}})
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_photos", Hosts: []string{}}})
 		case "/components":
 			json.NewEncoder(w).Encode([]configyComponent{})
 		case "/scripts":
@@ -427,19 +493,19 @@ func TestSweep_StoresFindings(t *testing.T) {
 		t.Fatal("expected at least one finding after sweep, got none")
 	}
 
-	// Verify the circleci convention passed for lucos_photos.
+	// Verify the circleci-config-exists convention passed for lucos_photos.
 	found := false
 	for _, f := range findings {
-		if f.Repo == "lucas42/lucos_photos" && f.Convention == "has-circleci-config" {
+		if f.Repo == "lucas42/lucos_photos" && f.Convention == "circleci-config-exists" {
 			found = true
 			if !f.Pass {
-				t.Errorf("expected has-circleci-config to pass for lucos_photos, got fail")
+				t.Errorf("expected circleci-config-exists to pass for lucos_photos, got fail")
 			}
 			break
 		}
 	}
 	if !found {
-		t.Error("no finding for has-circleci-config on lucos_photos")
+		t.Error("no finding for circleci-config-exists on lucos_photos")
 	}
 }
 
@@ -447,10 +513,13 @@ func TestSweep_StoresFindings(t *testing.T) {
 // the sweep creates an issue and stores its URL in the findings table.
 func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 	const issueURL = "https://github.com/lucas42/lucos_missing/issues/1"
-	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
+	// The circleci-config-exists convention will fail since the file is absent.
 	issueCreated := false
 
 	// Fake GitHub API: one repo with NO circleci config file, plus issue search/create endpoints.
+	// Multiple conventions will fail (circleci-config-exists, circleci-uses-lucos-orb,
+	// circleci-system-deploy-jobs), so multiple issue creation calls may occur. We
+	// track that at least one was made.
 	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -459,7 +528,7 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 				{FullName: "lucas42/lucos_missing"},
 			})
 		case r.URL.Path == "/repos/lucas42/lucos_missing/contents/.circleci/config.yml":
-			// File does not exist — convention fails.
+			// File does not exist — conventions fail.
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"message":"Not Found"}`))
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
@@ -467,20 +536,10 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 			json.NewEncoder(w).Encode(searchIssuesResponse{TotalCount: 0, Items: []gitHubIssue{}})
 		case r.Method == "POST" && r.URL.Path == "/repos/lucas42/lucos_missing/issues":
 			issueCreated = true
-			var payload createIssueRequest
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Errorf("failed to decode create issue request: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			if payload.Title != title {
-				t.Errorf("expected issue title %q, got %q", title, payload.Title)
-			}
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(gitHubIssue{
 				Number:  1,
 				HTMLURL: issueURL,
-				Title:   title,
 				State:   "open",
 			})
 		default:
@@ -489,12 +548,12 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 	}))
 	defer githubServer.Close()
 
-	// Fake configy: lucos_missing is a system.
+	// Fake configy: lucos_missing is a system with no configured hosts.
 	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/systems":
-			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_missing"}})
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_missing", Hosts: []string{}}})
 		case "/components":
 			json.NewEncoder(w).Encode([]configyComponent{})
 		case "/scripts":
@@ -513,7 +572,7 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 	}
 
 	if !issueCreated {
-		t.Error("expected an issue to be created for the failing convention, but POST was never called")
+		t.Error("expected at least one issue to be created for failing conventions, but POST was never called")
 	}
 
 	findings, err := s.db.GetFindings()
@@ -523,19 +582,19 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 
 	var found bool
 	for _, f := range findings {
-		if f.Repo == "lucas42/lucos_missing" && f.Convention == "has-circleci-config" {
+		if f.Repo == "lucas42/lucos_missing" && f.Convention == "circleci-config-exists" {
 			found = true
 			if f.Pass {
-				t.Error("expected finding to fail for lucos_missing")
+				t.Error("expected circleci-config-exists finding to fail for lucos_missing")
 			}
-			if f.IssueURL != issueURL {
-				t.Errorf("expected IssueURL %q, got %q", issueURL, f.IssueURL)
+			if f.IssueURL == "" {
+				t.Error("expected IssueURL to be set for failing convention")
 			}
 			break
 		}
 	}
 	if !found {
-		t.Error("no finding for has-circleci-config on lucos_missing")
+		t.Error("no finding for circleci-config-exists on lucos_missing")
 	}
 }
 

@@ -14,24 +14,37 @@ func TestAll_HasAtLeastOne(t *testing.T) {
 	}
 }
 
-// TestAll_HasCircleCIConvention verifies that the has-circleci-config convention is registered.
-func TestAll_HasCircleCIConvention(t *testing.T) {
-	cs := All()
-	found := false
-	for _, c := range cs {
-		if c.ID == "has-circleci-config" {
-			found = true
-			if c.Description == "" {
-				t.Error("has-circleci-config convention has empty description")
-			}
-			if c.Check == nil {
-				t.Error("has-circleci-config convention has nil Check function")
-			}
-			break
-		}
+// TestAll_HasCircleCIConventions verifies that the new nuanced CircleCI conventions
+// are all registered.
+func TestAll_HasCircleCIConventions(t *testing.T) {
+	expectedIDs := []string{
+		"circleci-config-exists",
+		"circleci-uses-lucos-orb",
+		"circleci-has-release-job",
+		"circleci-system-deploy-jobs",
+		"circleci-no-forbidden-jobs",
 	}
-	if !found {
-		t.Error("has-circleci-config convention not found in registry")
+	cs := All()
+	for _, id := range expectedIDs {
+		id := id
+		t.Run(id, func(t *testing.T) {
+			found := false
+			for _, c := range cs {
+				if c.ID == id {
+					found = true
+					if c.Description == "" {
+						t.Errorf("convention %q has empty description", id)
+					}
+					if c.Check == nil {
+						t.Errorf("convention %q has nil Check function", id)
+					}
+					break
+				}
+			}
+			if !found {
+				t.Errorf("convention %q not found in registry", id)
+			}
+		})
 	}
 }
 

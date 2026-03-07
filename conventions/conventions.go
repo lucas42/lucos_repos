@@ -43,6 +43,10 @@ type RepoContext struct {
 	// Type is the repo's classification as determined by lucos_configy.
 	Type RepoType
 
+	// Hosts is the list of deployment hosts for this repo, as listed in
+	// lucos_configy. Only populated for system repos; nil for all other types.
+	Hosts []string
+
 	// GitHubBaseURL is the base URL for GitHub API calls. Defaults to
 	// GitHubBaseURL ("https://api.github.com") when empty.
 	GitHubBaseURL string

@@ -23,7 +23,14 @@ const githubAPIBaseURL = "https://api.github.com"
 
 // configySystem represents a single entry from the configy /systems endpoint.
 type configySystem struct {
-	ID string `json:"id"`
+	ID    string   `json:"id"`
+	Hosts []string `json:"hosts"`
+}
+
+// repoInfo holds the repo type and (for systems) the list of deployment hosts.
+type repoInfo struct {
+	Type  conventions.RepoType
+	Hosts []string
 }
 
 // configyComponent represents a single entry from the configy /components endpoint.
@@ -172,20 +179,20 @@ func (s *AuditSweeper) sweep() error {
 	}
 	slog.Info("Fetched repos", "count", len(repos))
 
-	repoTypes, err := s.fetchRepoTypes()
+	repoInfos, err := s.fetchRepoTypes()
 	if err != nil {
 		// Non-fatal — we proceed with all repos typed as unconfigured.
 		slog.Warn("Failed to fetch configy data; treating all repos as unconfigured", "error", err)
-		repoTypes = map[string]conventions.RepoType{}
+		repoInfos = map[string]repoInfo{}
 	}
 
 	allConventions := conventions.All()
 	issueClient := s.issueClientFactory(token)
 
 	for _, repoName := range repos {
-		repoType, ok := repoTypes[repoName]
+		info, ok := repoInfos[repoName]
 		if !ok {
-			repoType = conventions.RepoTypeUnconfigured
+			info = repoInfo{Type: conventions.RepoTypeUnconfigured}
 		}
 
 		if err := s.db.UpsertRepo(repoName); err != nil {
@@ -196,13 +203,14 @@ func (s *AuditSweeper) sweep() error {
 		ctx := conventions.RepoContext{
 			Name:          repoName,
 			GitHubToken:   token,
-			Type:          repoType,
+			Type:          info.Type,
+			Hosts:         info.Hosts,
 			GitHubBaseURL: s.githubAPIBaseURL,
 		}
 
 		for _, convention := range allConventions {
 			// Skip conventions that don't apply to this repo type.
-			if !convention.AppliesToType(repoType) {
+			if !convention.AppliesToType(info.Type) {
 				continue
 			}
 
@@ -283,16 +291,19 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 }
 
 // fetchRepoTypes fetches systems, components, and scripts from lucos_configy
-// and returns a map of repo full_name (e.g. "lucas42/lucos_photos") to RepoType.
-func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error) {
-	result := map[string]conventions.RepoType{}
+// and returns a map of repo full_name (e.g. "lucas42/lucos_photos") to repoInfo.
+func (s *AuditSweeper) fetchRepoTypes() (map[string]repoInfo, error) {
+	result := map[string]repoInfo{}
 
 	systems, err := s.fetchConfigySystems()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch configy systems: %w", err)
 	}
 	for _, sys := range systems {
-		result[s.githubOrg+"/"+sys.ID] = conventions.RepoTypeSystem
+		result[s.githubOrg+"/"+sys.ID] = repoInfo{
+			Type:  conventions.RepoTypeSystem,
+			Hosts: sys.Hosts,
+		}
 	}
 
 	components, err := s.fetchConfigyComponents()
@@ -303,9 +314,9 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error)
 		key := s.githubOrg + "/" + comp.ID
 		if _, exists := result[key]; exists {
 			// Already classified under another type — mark as duplicate.
-			result[key] = conventions.RepoTypeDuplicate
+			result[key] = repoInfo{Type: conventions.RepoTypeDuplicate}
 		} else {
-			result[key] = conventions.RepoTypeComponent
+			result[key] = repoInfo{Type: conventions.RepoTypeComponent}
 		}
 	}
 
@@ -317,9 +328,9 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error)
 		key := s.githubOrg + "/" + script.ID
 		if _, exists := result[key]; exists {
 			// Already classified under another type — mark as duplicate.
-			result[key] = conventions.RepoTypeDuplicate
+			result[key] = repoInfo{Type: conventions.RepoTypeDuplicate}
 		} else {
-			result[key] = conventions.RepoTypeScript
+			result[key] = repoInfo{Type: conventions.RepoTypeScript}
 		}
 	}
 
