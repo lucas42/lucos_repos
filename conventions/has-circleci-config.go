@@ -10,6 +10,8 @@ func init() {
 	Register(Convention{
 		ID:          "has-circleci-config",
 		Description: "Repository has a .circleci/config.yml file",
+		Rationale:   "Without a CircleCI config, changes to this repository are not automatically built, tested, or deployed. This means code changes require manual intervention to reach production, which is error-prone and slows down delivery.",
+		Guidance:    "Add a `.circleci/config.yml` following the standard lucos CI template (see the lucos CLAUDE.md for the canonical config). If this repository is intentionally not deployed (e.g. a documentation-only repo or an archive), consider whether it should be excluded from this convention via `AppliesTo`.",
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
 			if base == "" {

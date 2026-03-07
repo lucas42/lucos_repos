@@ -206,8 +206,14 @@ func (s *AuditSweeper) sweep() error {
 			issueURL := ""
 			if !result.Pass {
 				// Ensure an open audit-finding issue exists for this violation.
+				convInfo := ConventionInfo{
+					ID:          convention.ID,
+					Description: convention.Description,
+					Rationale:   convention.Rationale,
+					Guidance:    convention.Guidance,
+				}
 				var issueErr error
-				issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convention.ID, convention.Description)
+				issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
 				if issueErr != nil {
 					slog.Warn("Failed to ensure issue exists for failing convention",
 						"repo", repoName, "convention", convention.ID, "error", issueErr)

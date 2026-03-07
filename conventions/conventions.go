@@ -56,6 +56,14 @@ type Convention struct {
 	// Description explains what the convention checks, in plain English.
 	Description string
 
+	// Rationale explains why this convention exists — what goes wrong if it is
+	// violated. This appears in generated issue bodies to give the reader context.
+	Rationale string
+
+	// Guidance suggests approaches to fix the violation. This appears in
+	// generated issue bodies to help the reader act on the issue.
+	Guidance string
+
 	// AppliesTo is the set of repo types this convention applies to. If empty,
 	// the convention applies to all repo types.
 	AppliesTo []RepoType
