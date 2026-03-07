@@ -1,10 +1,12 @@
 package conventions
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // RepoType categorises a repository based on its presence in lucos_configy.
@@ -142,6 +144,62 @@ func GitHubFileExistsFromBase(baseURL, token, repo, path string) (bool, error) {
 		return false, nil
 	default:
 		return false, fmt.Errorf("unexpected GitHub API status %d for %s in %s", resp.StatusCode, path, repo)
+	}
+}
+
+// gitHubContentsResponse is the subset of the GitHub Contents API response
+// that we care about when fetching a file's content.
+type gitHubContentsResponse struct {
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+}
+
+// GitHubFileContent fetches the decoded content of a file from a GitHub
+// repository. It returns (nil, nil) if the file does not exist.
+func GitHubFileContent(token, repo, path string) ([]byte, error) {
+	return GitHubFileContentFromBase(GitHubBaseURL, token, repo, path)
+}
+
+// GitHubFileContentFromBase is the implementation of GitHubFileContent with an
+// injectable base URL, used by tests to point at a fake server.
+func GitHubFileContentFromBase(baseURL, token, repo, path string) ([]byte, error) {
+	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var contents gitHubContentsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&contents); err != nil {
+			return nil, fmt.Errorf("failed to decode contents response: %w", err)
+		}
+		if contents.Encoding != "base64" {
+			return nil, fmt.Errorf("unexpected encoding %q for %s in %s", contents.Encoding, path, repo)
+		}
+		// GitHub wraps the base64 content in newlines — strip them before decoding.
+		decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(contents.Content, "\n", ""))
+		if err != nil {
+			return nil, fmt.Errorf("failed to base64-decode content of %s in %s: %w", path, repo, err)
+		}
+		return decoded, nil
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d for %s in %s", resp.StatusCode, path, repo)
 	}
 }
 
