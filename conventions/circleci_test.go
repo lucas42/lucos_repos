@@ -67,6 +67,11 @@ workflows:
             - lucos/build-amd64
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/docker-compose.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"type":"file"}`))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
 			w.WriteHeader(http.StatusOK)
 			w.Write(circleCIResponse(yamlContent))
@@ -199,6 +204,11 @@ workflows:
       - lucos/build-amd64
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/docker-compose.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"type":"file"}`))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
 			w.WriteHeader(http.StatusOK)
 			w.Write(circleCIResponse(yaml))
@@ -230,6 +240,11 @@ workflows:
       - build
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/docker-compose.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"type":"file"}`))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
 			w.WriteHeader(http.StatusOK)
 			w.Write(circleCIResponse(yaml))
@@ -259,6 +274,11 @@ orbs:
   lucos: lucos/deploy@1
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/docker-compose.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"type":"file"}`))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
 			w.WriteHeader(http.StatusOK)
 			w.Write(circleCIResponse(yaml))
@@ -299,9 +319,15 @@ func TestCircleCIUsesLucosOrb_AppliesToOtherRepos(t *testing.T) {
 }
 
 // TestCircleCIUsesLucosOrb_PassesWhenFileAbsent verifies the convention passes
-// when the config file doesn't exist (that case is handled by circleci-config-exists).
+// when the CircleCI config file doesn't exist (that case is handled by circleci-config-exists).
+// The repo does have a docker-compose.yml, so the non-Docker exclusion does not apply.
 func TestCircleCIUsesLucosOrb_PassesWhenFileAbsent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/docker-compose.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"type":"file"}`))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -314,6 +340,27 @@ func TestCircleCIUsesLucosOrb_PassesWhenFileAbsent(t *testing.T) {
 	result := findConvention(t, "circleci-uses-lucos-orb").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected pass when file absent (circleci-config-exists handles this), got fail: %s", result.Detail)
+	}
+}
+
+// TestCircleCIUsesLucosOrb_PassesForNonDockerRepo verifies the convention passes
+// for a repo that has no docker-compose.yml, since the lucos deploy orb only
+// provides Docker-based build and deploy jobs.
+func TestCircleCIUsesLucosOrb_PassesForNonDockerRepo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No docker-compose.yml — all requests return 404.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos_android",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+	result := findConvention(t, "circleci-uses-lucos-orb").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass for non-Docker repo (no docker-compose.yml), got fail: %s", result.Detail)
 	}
 }
 
