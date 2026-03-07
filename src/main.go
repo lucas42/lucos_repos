@@ -68,6 +68,8 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /", newDashboardHandler(db))
+
 	mux.HandleFunc("GET /_info", func(w http.ResponseWriter, r *http.Request) {
 		_, tokenErr := githubAuth.GetInstallationToken()
 		githubAuthCheck := Check{
@@ -120,7 +122,7 @@ func main() {
 			},
 			Icon:           "/icon",
 			NetworkOnly:    true,
-			ShowOnHomepage: false,
+			ShowOnHomepage: true,
 			StartURL:       "/",
 			Title:          "Repos",
 		}
