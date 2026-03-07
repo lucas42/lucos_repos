@@ -127,36 +127,51 @@ func (c *GitHubIssueClient) findMostRecentClosedIssue(repo, title string) (strin
 }
 
 // fetchIssuesList performs a GET request to the given Issues List API URL and
-// returns the decoded slice of issues.
+// returns the decoded slice of issues. It handles rate limit responses by
+// waiting for the reset window (up to rateLimitMaxWait) and retrying once.
 func (c *GitHubIssueClient) fetchIssuesList(listURL string) ([]gitHubIssue, error) {
-	req, err := http.NewRequest("GET", listURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build issues list request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequest("GET", listURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build issues list request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GitHub issues list request failed: %w", err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read issues list response: %w", err)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub issues list request failed: %w", err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read issues list response: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusForbidden {
+			if waitErr := handleRateLimitError(resp, body); waitErr != nil {
+				return nil, waitErr
+			}
+			// Rate limit wait succeeded — loop to retry.
+			continue
+		}
+
+		checkRateLimitHeaders(resp)
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GitHub issues list API returned %d: %s", resp.StatusCode, body)
+		}
+
+		var issues []gitHubIssue
+		if err := json.Unmarshal(body, &issues); err != nil {
+			return nil, fmt.Errorf("failed to decode issues list response: %w", err)
+		}
+
+		return issues, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub issues list API returned %d: %s", resp.StatusCode, body)
-	}
-
-	var issues []gitHubIssue
-	if err := json.Unmarshal(body, &issues); err != nil {
-		return nil, fmt.Errorf("failed to decode issues list response: %w", err)
-	}
-
-	return issues, nil
+	return nil, fmt.Errorf("GitHub issues list API: rate limit retry exhausted")
 }
 
 // createIssueRequest is the JSON body for creating a GitHub issue.
