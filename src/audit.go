@@ -243,14 +243,37 @@ func (s *AuditSweeper) sweep() error {
 }
 
 // fetchRepos fetches the full list of repos in the GitHub org, handling pagination.
+// It handles rate limit responses by waiting for the reset window (up to
+// rateLimitMaxWait) and retrying the affected page once.
 func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 	var allRepos []string
 	page := 1
 	const perPage = 100
 
 	for {
-		url := fmt.Sprintf("%s/users/%s/repos?per_page=%d&page=%d", s.githubAPIBaseURL, s.githubOrg, perPage, page)
-		req, err := http.NewRequest("GET", url, nil)
+		pageRepos, err := s.fetchReposPage(token, page, perPage)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range pageRepos {
+			allRepos = append(allRepos, r.FullName)
+		}
+		if len(pageRepos) < perPage {
+			break
+		}
+		page++
+	}
+
+	return allRepos, nil
+}
+
+// fetchReposPage fetches a single page of repos and handles rate limit responses
+// by waiting and retrying once.
+func (s *AuditSweeper) fetchReposPage(token string, page, perPage int) ([]gitHubRepo, error) {
+	pageURL := fmt.Sprintf("%s/users/%s/repos?per_page=%d&page=%d", s.githubAPIBaseURL, s.githubOrg, perPage, page)
+
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequest("GET", pageURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build repos request: %w", err)
 		}
@@ -268,6 +291,16 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 			return nil, fmt.Errorf("failed to read repos response: %w", err)
 		}
 
+		if resp.StatusCode == http.StatusForbidden {
+			if waitErr := handleRateLimitError(resp, body); waitErr != nil {
+				return nil, waitErr
+			}
+			// Rate limit wait succeeded — loop to retry.
+			continue
+		}
+
+		checkRateLimitHeaders(resp)
+
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("GitHub repos API returned %d", resp.StatusCode)
 		}
@@ -276,18 +309,10 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 		if err := json.Unmarshal(body, &pageRepos); err != nil {
 			return nil, fmt.Errorf("failed to decode repos response: %w", err)
 		}
-
-		for _, r := range pageRepos {
-			allRepos = append(allRepos, r.FullName)
-		}
-
-		if len(pageRepos) < perPage {
-			break
-		}
-		page++
+		return pageRepos, nil
 	}
 
-	return allRepos, nil
+	return nil, fmt.Errorf("GitHub repos API: rate limit retry exhausted")
 }
 
 // fetchRepoTypes fetches systems, components, and scripts from lucos_configy
