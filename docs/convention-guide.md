@@ -101,7 +101,9 @@ Why this is bad:
 
 - `RepoTypeSystem` -- repos that appear in configy's systems list (deployed services)
 - `RepoTypeComponent` -- repos that appear in configy's components list (shared libraries, tools)
+- `RepoTypeScript` -- repos that appear in configy's scripts list (tools designed to run locally, not deployed as services)
 - `RepoTypeUnconfigured` -- repos not in configy at all
+- `RepoTypeDuplicate` -- repos that appear in more than one configy category; this is a configuration error state and conventions should not normally target this type
 
 An empty `AppliesTo` means "all repo types". This should be the exception, not the default. Most conventions are specific to deployed systems or to repos that are actively maintained.
 
