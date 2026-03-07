@@ -216,8 +216,11 @@ func (s *AuditSweeper) sweep() error {
 		}
 
 		for _, convention := range allConventions {
-			// Skip conventions that don't apply to this repo type.
+			// Skip conventions that don't apply to this repo type or this specific repo.
 			if !convention.AppliesToType(info.Type) {
+				continue
+			}
+			if !convention.AppliesToRepo(repoName) {
 				continue
 			}
 

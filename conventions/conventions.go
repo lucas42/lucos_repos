@@ -84,6 +84,13 @@ type Convention struct {
 	// the convention applies to all repo types.
 	AppliesTo []RepoType
 
+	// ExcludeRepos is a set of specific repo full names (e.g.
+	// "lucas42/lucos_deploy_orb") that are exempt from this convention.
+	// Use this sparingly — only when a repo has a legitimate structural reason
+	// why the convention cannot apply (e.g. it defines the thing the convention
+	// requires, which would create a circular dependency).
+	ExcludeRepos []string
+
 	// Check runs the convention against a repo and returns the result.
 	Check func(repo RepoContext) ConventionResult
 }
@@ -100,6 +107,18 @@ func (c Convention) AppliesToType(t RepoType) bool {
 		}
 	}
 	return false
+}
+
+// AppliesToRepo reports whether the convention applies to the given repo full
+// name (e.g. "lucas42/lucos_photos"). A convention with no ExcludeRepos set
+// applies to every repo.
+func (c Convention) AppliesToRepo(name string) bool {
+	for _, excluded := range c.ExcludeRepos {
+		if excluded == name {
+			return false
+		}
+	}
+	return true
 }
 
 // registry holds all registered conventions. Conventions are added at init time

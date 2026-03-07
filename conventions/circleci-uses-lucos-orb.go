@@ -17,6 +17,9 @@ func init() {
 		Guidance: "Add the following to the `orbs:` section of `.circleci/config.yml`:\n\n" +
 			"```yaml\norbs:\n  lucos: lucos/deploy@0\n```",
 		AppliesTo: []RepoType{RepoTypeSystem, RepoTypeComponent},
+		// lucos_deploy_orb defines the orb itself — it cannot consume itself
+		// without creating a circular dependency.
+		ExcludeRepos: []string{"lucas42/lucos_deploy_orb"},
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
 			if base == "" {

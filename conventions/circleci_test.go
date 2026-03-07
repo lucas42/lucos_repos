@@ -279,6 +279,25 @@ orbs:
 	}
 }
 
+// TestCircleCIUsesLucosOrb_ExcludesDeployOrbRepo verifies the convention does
+// not apply to lucos_deploy_orb, since that repo defines the orb itself and
+// cannot consume it without creating a circular dependency.
+func TestCircleCIUsesLucosOrb_ExcludesDeployOrbRepo(t *testing.T) {
+	c := findConvention(t, "circleci-uses-lucos-orb")
+	if c.AppliesToRepo("lucas42/lucos_deploy_orb") {
+		t.Error("expected circleci-uses-lucos-orb NOT to apply to lucas42/lucos_deploy_orb")
+	}
+}
+
+// TestCircleCIUsesLucosOrb_AppliesToOtherRepos verifies the convention still
+// applies to all other repos (e.g. a regular system repo).
+func TestCircleCIUsesLucosOrb_AppliesToOtherRepos(t *testing.T) {
+	c := findConvention(t, "circleci-uses-lucos-orb")
+	if !c.AppliesToRepo("lucas42/lucos_photos") {
+		t.Error("expected circleci-uses-lucos-orb to apply to lucas42/lucos_photos")
+	}
+}
+
 // TestCircleCIUsesLucosOrb_PassesWhenFileAbsent verifies the convention passes
 // when the config file doesn't exist (that case is handled by circleci-config-exists).
 func TestCircleCIUsesLucosOrb_PassesWhenFileAbsent(t *testing.T) {
