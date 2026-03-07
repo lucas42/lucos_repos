@@ -49,6 +49,9 @@ type ConventionInfo struct {
 	Description string
 	Rationale   string
 	Guidance    string
+	// Detail is the specific detail string from the convention check result,
+	// e.g. "Expected: lucos/deploy-avalon; Found: none". May be empty.
+	Detail string
 }
 
 // EnsureIssueExists checks whether an open audit-finding issue exists for the
@@ -186,6 +189,10 @@ type createIssueRequest struct {
 func (c *GitHubIssueClient) createIssue(repo, title string, conv ConventionInfo, previousURL string) (string, error) {
 	body := fmt.Sprintf("The `%s` convention is failing for this repository.\n\n**Convention:** %s\n**Description:** %s",
 		conv.ID, conv.ID, conv.Description)
+
+	if conv.Detail != "" {
+		body += fmt.Sprintf("\n\n**Detail:** %s", conv.Detail)
+	}
 
 	if conv.Rationale != "" {
 		body += fmt.Sprintf("\n\n**Why this matters:** %s", conv.Rationale)

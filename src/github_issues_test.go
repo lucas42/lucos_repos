@@ -300,6 +300,107 @@ func TestEnsureIssueExists_IncludesRationaleAndGuidance(t *testing.T) {
 	}
 }
 
+// TestEnsureIssueExists_IncludesDetail verifies that when a convention result
+// has a non-empty Detail string, it appears in the created issue body.
+func TestEnsureIssueExists_IncludesDetail(t *testing.T) {
+	const newURL = "https://github.com/lucas42/test_repo/issues/30"
+	conv := ConventionInfo{
+		ID:          "circleci-system-deploy-jobs",
+		Description: "CircleCI config includes the correct deploy jobs for all configured hosts",
+		Detail:      "Expected deploy jobs: lucos/deploy-avalon; Found: none",
+	}
+	title := conventionIssueTitle(conv.ID, conv.Description)
+	var createdBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(buildIssuesList([]gitHubIssue{}))
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			var payload createIssueRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("failed to decode create issue request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			createdBody = payload.Body
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(gitHubIssue{
+				Number:  30,
+				HTMLURL: newURL,
+				Title:   title,
+				State:   "open",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	_, err := client.EnsureIssueExists("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(createdBody, "**Detail:**") {
+		t.Errorf("expected body to contain detail header, got: %q", createdBody)
+	}
+	if !strings.Contains(createdBody, conv.Detail) {
+		t.Errorf("expected body to contain detail text %q, got: %q", conv.Detail, createdBody)
+	}
+}
+
+// TestEnsureIssueExists_EmptyDetailOmitted verifies that when a convention result
+// has an empty Detail string, no detail section appears in the issue body.
+func TestEnsureIssueExists_EmptyDetailOmitted(t *testing.T) {
+	const newURL = "https://github.com/lucas42/test_repo/issues/31"
+	conv := ConventionInfo{
+		ID:          "circleci-config-exists",
+		Description: "Repository has a .circleci/config.yml file",
+		Detail:      "", // empty — should be omitted
+	}
+	title := conventionIssueTitle(conv.ID, conv.Description)
+	var createdBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(buildIssuesList([]gitHubIssue{}))
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			var payload createIssueRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("failed to decode create issue request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			createdBody = payload.Body
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(gitHubIssue{
+				Number:  31,
+				HTMLURL: newURL,
+				Title:   title,
+				State:   "open",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	_, err := client.EnsureIssueExists("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(createdBody, "**Detail:**") {
+		t.Errorf("expected body NOT to contain detail header when Detail is empty, got: %q", createdBody)
+	}
+}
+
 // TestConventionIssueTitle verifies the standardised title format.
 func TestConventionIssueTitle(t *testing.T) {
 	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
