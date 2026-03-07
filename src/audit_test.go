@@ -420,6 +420,32 @@ func TestAppliesToType_Restricted(t *testing.T) {
 	}
 }
 
+// TestAppliesToRepo_NoExclusions verifies a convention with no ExcludeRepos
+// applies to every repo.
+func TestAppliesToRepo_NoExclusions(t *testing.T) {
+	c := conventions.Convention{ID: "any-convention"}
+	for _, repo := range []string{"lucas42/lucos_photos", "lucas42/lucos_deploy_orb", "lucas42/lucos_repos"} {
+		if !c.AppliesToRepo(repo) {
+			t.Errorf("expected convention with no ExcludeRepos to apply to %q, got false", repo)
+		}
+	}
+}
+
+// TestAppliesToRepo_ExcludedRepo verifies a convention with ExcludeRepos does
+// not apply to a listed repo but still applies to others.
+func TestAppliesToRepo_ExcludedRepo(t *testing.T) {
+	c := conventions.Convention{
+		ID:           "some-convention",
+		ExcludeRepos: []string{"lucas42/lucos_deploy_orb"},
+	}
+	if c.AppliesToRepo("lucas42/lucos_deploy_orb") {
+		t.Error("expected convention NOT to apply to the excluded repo")
+	}
+	if !c.AppliesToRepo("lucas42/lucos_photos") {
+		t.Error("expected convention to apply to non-excluded repo")
+	}
+}
+
 // minimalValidCIConfig is a base64-encoded minimal CircleCI config that satisfies
 // all circleci-* conventions for a system with no configured hosts. It declares the
 // lucos deploy orb and includes a build job but no deploy jobs (matching a system
