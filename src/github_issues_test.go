@@ -409,3 +409,77 @@ func TestConventionIssueTitle(t *testing.T) {
 		t.Errorf("expected title %q, got %q", expected, title)
 	}
 }
+
+// TestEnsureIssueExists_ArchivedRepo403 verifies that when the issues list
+// endpoint returns a non-rate-limit 403 (e.g. archived repo), EnsureIssueExists
+// returns an error wrapping ErrIssuesUnavailable.
+func TestEnsureIssueExists_ArchivedRepo403(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return a non-rate-limit 403 on the issues list — simulates archived repo.
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"Repository was archived so is read-only."}`))
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	_, err := client.EnsureIssueExists("lucas42/archived_repo", conv)
+	if err == nil {
+		t.Fatal("expected error for 403, got nil")
+	}
+	if !isIssuesUnavailableErr(err) {
+		t.Errorf("expected ErrIssuesUnavailable, got: %v", err)
+	}
+}
+
+// TestEnsureIssueExists_IssuesDisabled410 verifies that when the issues list
+// endpoint returns 410 (issues disabled), EnsureIssueExists returns an error
+// wrapping ErrIssuesUnavailable.
+func TestEnsureIssueExists_IssuesDisabled410(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte(`{"message":"Issues has been disabled in this repository."}`))
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	_, err := client.EnsureIssueExists("lucas42/no_issues_repo", conv)
+	if err == nil {
+		t.Fatal("expected error for 410, got nil")
+	}
+	if !isIssuesUnavailableErr(err) {
+		t.Errorf("expected ErrIssuesUnavailable, got: %v", err)
+	}
+}
+
+// TestEnsureIssueExists_CreateReturns403 verifies that when the issue create
+// endpoint returns 403 (e.g. archived repo, despite passing the list check),
+// EnsureIssueExists returns ErrIssuesUnavailable.
+func TestEnsureIssueExists_CreateReturns403(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET":
+			// Issue list: no existing issues.
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(buildIssuesList([]gitHubIssue{}))
+		case r.Method == "POST":
+			// Create: archived repo 403.
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"message":"Repository was archived so is read-only."}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	_, err := client.EnsureIssueExists("lucas42/archived_repo", conv)
+	if err == nil {
+		t.Fatal("expected error for 403 on create, got nil")
+	}
+	if !isIssuesUnavailableErr(err) {
+		t.Errorf("expected ErrIssuesUnavailable, got: %v", err)
+	}
+}

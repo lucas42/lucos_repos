@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -46,6 +47,7 @@ type configyScript struct {
 // gitHubRepo represents a single entry from the GitHub /users/{user}/repos endpoint.
 type gitHubRepo struct {
 	FullName string `json:"full_name"`
+	Archived bool   `json:"archived"`
 }
 
 // scheduleTrackerPayload is the JSON body sent to the schedule tracker endpoint.
@@ -196,7 +198,15 @@ func (s *AuditSweeper) sweep() error {
 	// has incomplete coverage and should not be reported as successful.
 	skippedCount := 0
 
-	for _, repoName := range repos {
+	for _, repo := range repos {
+		// Archived repos are intentionally frozen — convention compliance is
+		// irrelevant and no new issues can be filed on them anyway.
+		if repo.Archived {
+			slog.Debug("Skipping archived repo", "repo", repo.FullName)
+			continue
+		}
+
+		repoName := repo.FullName
 		info, ok := repoInfos[repoName]
 		if !ok {
 			info = repoInfo{Type: conventions.RepoTypeUnconfigured}
@@ -239,9 +249,16 @@ func (s *AuditSweeper) sweep() error {
 				var issueErr error
 				issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
 				if issueErr != nil {
-					slog.Warn("Failed to ensure issue exists for failing convention",
-						"repo", repoName, "convention", convention.ID, "error", issueErr)
-					skippedCount++
+					if isIssuesUnavailableErr(issueErr) {
+						// 403/410 means issues are unavailable (archived or disabled) —
+						// this is an expected state, not an API error. Log and move on.
+						slog.Warn("Issues unavailable for repo, skipping issue creation",
+							"repo", repoName, "convention", convention.ID, "error", issueErr)
+					} else {
+						slog.Warn("Failed to ensure issue exists for failing convention",
+							"repo", repoName, "convention", convention.ID, "error", issueErr)
+						skippedCount++
+					}
 				}
 			}
 
@@ -260,8 +277,8 @@ func (s *AuditSweeper) sweep() error {
 // fetchRepos fetches the full list of repos in the GitHub org, handling pagination.
 // It handles rate limit responses by waiting for the reset window (up to
 // rateLimitMaxWait) and retrying the affected page once.
-func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
-	var allRepos []string
+func (s *AuditSweeper) fetchRepos(token string) ([]gitHubRepo, error) {
+	var allRepos []gitHubRepo
 	page := 1
 	const perPage = 100
 
@@ -270,9 +287,7 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, r := range pageRepos {
-			allRepos = append(allRepos, r.FullName)
-		}
+		allRepos = append(allRepos, pageRepos...)
 		if len(pageRepos) < perPage {
 			break
 		}
@@ -435,4 +450,12 @@ func (s *AuditSweeper) fetchConfigyScripts() ([]configyScript, error) {
 		return nil, fmt.Errorf("failed to decode configy scripts: %w", err)
 	}
 	return scripts, nil
+}
+
+// isIssuesUnavailableErr returns true if err wraps ErrIssuesUnavailable —
+// meaning the GitHub Issues API returned 403 (archived/read-only) or 410
+// (issues disabled). These are expected states and should not cause the sweep
+// to be reported as incomplete.
+func isIssuesUnavailableErr(err error) bool {
+	return errors.Is(err, ErrIssuesUnavailable)
 }

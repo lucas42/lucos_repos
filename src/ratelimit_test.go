@@ -247,7 +247,7 @@ func TestFetchRepos_RateLimitRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success after retry, got error: %v", err)
 	}
-	if len(repos) != 1 || repos[0] != "lucas42/lucos_photos" {
+	if len(repos) != 1 || repos[0].FullName != "lucas42/lucos_photos" {
 		t.Errorf("expected [lucas42/lucos_photos], got %v", repos)
 	}
 	if callCount != 2 {
