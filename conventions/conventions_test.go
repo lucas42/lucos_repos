@@ -1,4 +1,4 @@
-package main
+package conventions
 
 import (
 	"net/http"
@@ -6,19 +6,19 @@ import (
 	"testing"
 )
 
-// TestAllConventions_HasAtLeastOne verifies that at least one convention is registered.
-func TestAllConventions_HasAtLeastOne(t *testing.T) {
-	conventions := AllConventions()
-	if len(conventions) == 0 {
+// TestAll_HasAtLeastOne verifies that at least one convention is registered.
+func TestAll_HasAtLeastOne(t *testing.T) {
+	cs := All()
+	if len(cs) == 0 {
 		t.Fatal("expected at least one convention to be registered, got none")
 	}
 }
 
-// TestAllConventions_HasCircleCIConvention verifies that the has-circleci-config convention is registered.
-func TestAllConventions_HasCircleCIConvention(t *testing.T) {
-	conventions := AllConventions()
+// TestAll_HasCircleCIConvention verifies that the has-circleci-config convention is registered.
+func TestAll_HasCircleCIConvention(t *testing.T) {
+	cs := All()
 	found := false
-	for _, c := range conventions {
+	for _, c := range cs {
 		if c.ID == "has-circleci-config" {
 			found = true
 			if c.Description == "" {
@@ -35,19 +35,19 @@ func TestAllConventions_HasCircleCIConvention(t *testing.T) {
 	}
 }
 
-// TestAllConventions_ReturnsCopy verifies that AllConventions returns an independent copy
+// TestAll_ReturnsCopy verifies that All returns an independent copy
 // (modifying the returned slice should not affect the registry).
-func TestAllConventions_ReturnsCopy(t *testing.T) {
-	first := AllConventions()
-	second := AllConventions()
+func TestAll_ReturnsCopy(t *testing.T) {
+	first := All()
+	second := All()
 	if len(first) != len(second) {
 		t.Errorf("expected both calls to return same length, got %d and %d", len(first), len(second))
 	}
 	// Modifying the returned slice should not affect the next call.
 	first[0].ID = "mutated"
-	third := AllConventions()
+	third := All()
 	if third[0].ID == "mutated" {
-		t.Error("AllConventions returned a reference to the internal slice, not a copy")
+		t.Error("All returned a reference to the internal slice, not a copy")
 	}
 }
 
@@ -64,11 +64,7 @@ func TestHasCircleCIConfig_Pass(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// We can't easily redirect the GitHub API base URL without refactoring,
-	// so we test githubFileExists directly using a test helper that patches the URL.
-	// For now, verify the convention check logic via a table-driven test that
-	// constructs the result directly from the API helper.
-	exists, err := githubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
+	exists, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +81,7 @@ func TestHasCircleCIConfig_Fail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exists, err := githubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
+	exists, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +97,7 @@ func TestHasCircleCIConfig_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := githubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
+	_, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
 	if err == nil {
 		t.Error("expected error for 500 response, got nil")
 	}

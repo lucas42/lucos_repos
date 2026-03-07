@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"lucos_repos/conventions"
 )
 
 // newStatusHandler returns the GET /api/status handler backed by the given DB.
@@ -58,7 +60,7 @@ func TestAPIStatus_WithFindings(t *testing.T) {
 		t.Fatalf("UpsertConvention failed: %v", err)
 	}
 	if err := db.SaveFinding(
-		ConventionResult{Convention: "has-circleci-config", Pass: true, Detail: ".circleci/config.yml found"},
+		conventions.ConventionResult{Convention: "has-circleci-config", Pass: true, Detail: ".circleci/config.yml found"},
 		"lucas42/lucos_test", "",
 	); err != nil {
 		t.Fatalf("SaveFinding failed: %v", err)
