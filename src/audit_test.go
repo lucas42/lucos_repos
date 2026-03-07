@@ -112,7 +112,49 @@ func TestFetchConfigyComponents_Success(t *testing.T) {
 	}
 }
 
-// TestFetchRepoTypes_ClassifiesCorrectly verifies systems, components, and
+// TestFetchConfigyScripts_Success verifies that scripts are parsed correctly.
+func TestFetchConfigyScripts_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/scripts" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]configyScript{
+				{ID: "lucos_agent"},
+				{ID: ".dotfiles"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	s := &AuditSweeper{configyBaseURL: server.URL}
+	scripts, err := s.fetchConfigyScripts()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(scripts) != 2 {
+		t.Fatalf("expected 2 scripts, got %d", len(scripts))
+	}
+	if scripts[0].ID != "lucos_agent" {
+		t.Errorf("expected first script 'lucos_agent', got %q", scripts[0].ID)
+	}
+}
+
+// TestFetchConfigyScripts_HTTPError verifies that a non-200 response returns an error.
+func TestFetchConfigyScripts_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	s := &AuditSweeper{configyBaseURL: server.URL}
+	_, err := s.fetchConfigyScripts()
+	if err == nil {
+		t.Error("expected error for 500 response, got nil")
+	}
+}
+
+// TestFetchRepoTypes_ClassifiesCorrectly verifies systems, components, scripts, and
 // unconfigured repos are classified correctly.
 func TestFetchRepoTypes_ClassifiesCorrectly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +167,10 @@ func TestFetchRepoTypes_ClassifiesCorrectly(t *testing.T) {
 		case "/components":
 			json.NewEncoder(w).Encode([]configyComponent{
 				{ID: "lucos_navbar"},
+			})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{
+				{ID: "lucos_agent"},
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -144,6 +190,9 @@ func TestFetchRepoTypes_ClassifiesCorrectly(t *testing.T) {
 	if types["lucas42/lucos_navbar"] != conventions.RepoTypeComponent {
 		t.Errorf("expected lucos_navbar to be component, got %q", types["lucas42/lucos_navbar"])
 	}
+	if types["lucas42/lucos_agent"] != conventions.RepoTypeScript {
+		t.Errorf("expected lucos_agent to be script, got %q", types["lucas42/lucos_agent"])
+	}
 	// A repo not in configy should be absent from the map.
 	if _, ok := types["lucas42/lucos_unknown"]; ok {
 		t.Error("expected lucos_unknown to be absent from types map")
@@ -160,6 +209,8 @@ func TestFetchRepoTypes_SystemTakesPrecedenceOverComponent(t *testing.T) {
 			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_shared"}})
 		case "/components":
 			json.NewEncoder(w).Encode([]configyComponent{{ID: "lucos_shared"}})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -173,6 +224,34 @@ func TestFetchRepoTypes_SystemTakesPrecedenceOverComponent(t *testing.T) {
 	}
 	if types["lucas42/lucos_shared"] != conventions.RepoTypeSystem {
 		t.Errorf("expected lucos_shared to be system (not component), got %q", types["lucas42/lucos_shared"])
+	}
+}
+
+// TestFetchRepoTypes_SystemTakesPrecedenceOverScript verifies that a repo
+// listed as both a system and a script is classified as system.
+func TestFetchRepoTypes_SystemTakesPrecedenceOverScript(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_shared"}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{{ID: "lucos_shared"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
+	types, err := s.fetchRepoTypes()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if types["lucas42/lucos_shared"] != conventions.RepoTypeSystem {
+		t.Errorf("expected lucos_shared to be system (not script), got %q", types["lucas42/lucos_shared"])
 	}
 }
 
@@ -244,7 +323,7 @@ func TestFetchRepos_Pagination(t *testing.T) {
 // TestAppliesToType_NoAppliesTo verifies a convention with no AppliesTo applies to all types.
 func TestAppliesToType_NoAppliesTo(t *testing.T) {
 	c := conventions.Convention{ID: "any-convention"}
-	for _, rt := range []conventions.RepoType{conventions.RepoTypeSystem, conventions.RepoTypeComponent, conventions.RepoTypeUnconfigured} {
+	for _, rt := range []conventions.RepoType{conventions.RepoTypeSystem, conventions.RepoTypeComponent, conventions.RepoTypeScript, conventions.RepoTypeUnconfigured} {
 		if !c.AppliesToType(rt) {
 			t.Errorf("expected convention with no AppliesTo to apply to %q, got false", rt)
 		}
@@ -295,6 +374,8 @@ func TestSweep_StoresFindings(t *testing.T) {
 			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_photos"}})
 		case "/components":
 			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -388,6 +469,8 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_missing"}})
 		case "/components":
 			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

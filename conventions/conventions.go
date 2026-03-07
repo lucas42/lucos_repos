@@ -19,6 +19,10 @@ const (
 	// RepoTypeComponent is a repo that appears in configy's components list.
 	RepoTypeComponent RepoType = "component"
 
+	// RepoTypeScript is a repo that appears in configy's scripts list.
+	// Scripts are tools designed to run locally rather than being deployed.
+	RepoTypeScript RepoType = "script"
+
 	// RepoTypeUnconfigured is a repo not found in configy at all.
 	RepoTypeUnconfigured RepoType = "unconfigured"
 )
