@@ -25,6 +25,11 @@ const (
 
 	// RepoTypeUnconfigured is a repo not found in configy at all.
 	RepoTypeUnconfigured RepoType = "unconfigured"
+
+	// RepoTypeDuplicate is a repo that appears in more than one configy list
+	// (e.g. both systems and components). This is a configuration error — a
+	// repo should belong to exactly one configy category.
+	RepoTypeDuplicate RepoType = "duplicate"
 )
 
 // RepoContext contains the information available to a convention check function.

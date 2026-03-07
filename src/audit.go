@@ -300,9 +300,12 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error)
 		return nil, fmt.Errorf("failed to fetch configy components: %w", err)
 	}
 	for _, comp := range components {
-		// A repo that is both a system and a component keeps its system type.
-		if _, exists := result[s.githubOrg+"/"+comp.ID]; !exists {
-			result[s.githubOrg+"/"+comp.ID] = conventions.RepoTypeComponent
+		key := s.githubOrg + "/" + comp.ID
+		if _, exists := result[key]; exists {
+			// Already classified under another type — mark as duplicate.
+			result[key] = conventions.RepoTypeDuplicate
+		} else {
+			result[key] = conventions.RepoTypeComponent
 		}
 	}
 
@@ -311,9 +314,12 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error)
 		return nil, fmt.Errorf("failed to fetch configy scripts: %w", err)
 	}
 	for _, script := range scripts {
-		// A repo that is already classified (e.g. as a system) keeps its existing type.
-		if _, exists := result[s.githubOrg+"/"+script.ID]; !exists {
-			result[s.githubOrg+"/"+script.ID] = conventions.RepoTypeScript
+		key := s.githubOrg + "/" + script.ID
+		if _, exists := result[key]; exists {
+			// Already classified under another type — mark as duplicate.
+			result[key] = conventions.RepoTypeDuplicate
+		} else {
+			result[key] = conventions.RepoTypeScript
 		}
 	}
 
