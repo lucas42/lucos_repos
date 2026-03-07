@@ -199,9 +199,9 @@ func TestFetchRepoTypes_ClassifiesCorrectly(t *testing.T) {
 	}
 }
 
-// TestFetchRepoTypes_SystemTakesPrecedenceOverComponent verifies that a repo
-// listed as both a system and a component is classified as system.
-func TestFetchRepoTypes_SystemTakesPrecedenceOverComponent(t *testing.T) {
+// TestFetchRepoTypes_DuplicateSystemAndComponent verifies that a repo listed
+// as both a system and a component is classified as duplicate.
+func TestFetchRepoTypes_DuplicateSystemAndComponent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -222,14 +222,14 @@ func TestFetchRepoTypes_SystemTakesPrecedenceOverComponent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if types["lucas42/lucos_shared"] != conventions.RepoTypeSystem {
-		t.Errorf("expected lucos_shared to be system (not component), got %q", types["lucas42/lucos_shared"])
+	if types["lucas42/lucos_shared"] != conventions.RepoTypeDuplicate {
+		t.Errorf("expected lucos_shared to be duplicate (listed in both systems and components), got %q", types["lucas42/lucos_shared"])
 	}
 }
 
-// TestFetchRepoTypes_SystemTakesPrecedenceOverScript verifies that a repo
-// listed as both a system and a script is classified as system.
-func TestFetchRepoTypes_SystemTakesPrecedenceOverScript(t *testing.T) {
+// TestFetchRepoTypes_DuplicateSystemAndScript verifies that a repo listed as
+// both a system and a script is classified as duplicate.
+func TestFetchRepoTypes_DuplicateSystemAndScript(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -250,8 +250,36 @@ func TestFetchRepoTypes_SystemTakesPrecedenceOverScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if types["lucas42/lucos_shared"] != conventions.RepoTypeSystem {
-		t.Errorf("expected lucos_shared to be system (not script), got %q", types["lucas42/lucos_shared"])
+	if types["lucas42/lucos_shared"] != conventions.RepoTypeDuplicate {
+		t.Errorf("expected lucos_shared to be duplicate (listed in both systems and scripts), got %q", types["lucas42/lucos_shared"])
+	}
+}
+
+// TestFetchRepoTypes_DuplicateComponentAndScript verifies that a repo listed
+// as both a component and a script is classified as duplicate.
+func TestFetchRepoTypes_DuplicateComponentAndScript(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{{ID: "lucos_shared"}})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{{ID: "lucos_shared"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := &AuditSweeper{configyBaseURL: server.URL, githubOrg: "lucas42"}
+	types, err := s.fetchRepoTypes()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if types["lucas42/lucos_shared"] != conventions.RepoTypeDuplicate {
+		t.Errorf("expected lucos_shared to be duplicate (listed in both components and scripts), got %q", types["lucas42/lucos_shared"])
 	}
 }
 
@@ -323,7 +351,7 @@ func TestFetchRepos_Pagination(t *testing.T) {
 // TestAppliesToType_NoAppliesTo verifies a convention with no AppliesTo applies to all types.
 func TestAppliesToType_NoAppliesTo(t *testing.T) {
 	c := conventions.Convention{ID: "any-convention"}
-	for _, rt := range []conventions.RepoType{conventions.RepoTypeSystem, conventions.RepoTypeComponent, conventions.RepoTypeScript, conventions.RepoTypeUnconfigured} {
+	for _, rt := range []conventions.RepoType{conventions.RepoTypeSystem, conventions.RepoTypeComponent, conventions.RepoTypeScript, conventions.RepoTypeUnconfigured, conventions.RepoTypeDuplicate} {
 		if !c.AppliesToType(rt) {
 			t.Errorf("expected convention with no AppliesTo to apply to %q, got false", rt)
 		}
