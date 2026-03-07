@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lucos_repos/conventions"
 )
 
 // newTestSweeper creates an AuditSweeper wired to a temporary DB with its
@@ -18,7 +20,7 @@ func newTestSweeper(t *testing.T, configyServer, githubServer *httptest.Server) 
 	t.Helper()
 	db := openTestDB(t)
 	// Pre-populate the conventions table so SaveFinding doesn't hit FK errors.
-	for _, c := range AllConventions() {
+	for _, c := range conventions.All() {
 		if err := db.UpsertConvention(c.ID, c.Description); err != nil {
 			t.Fatalf("failed to upsert convention %s: %v", c.ID, err)
 		}
@@ -136,10 +138,10 @@ func TestFetchRepoTypes_ClassifiesCorrectly(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if types["lucas42/lucos_photos"] != RepoTypeSystem {
+	if types["lucas42/lucos_photos"] != conventions.RepoTypeSystem {
 		t.Errorf("expected lucos_photos to be system, got %q", types["lucas42/lucos_photos"])
 	}
-	if types["lucas42/lucos_navbar"] != RepoTypeComponent {
+	if types["lucas42/lucos_navbar"] != conventions.RepoTypeComponent {
 		t.Errorf("expected lucos_navbar to be component, got %q", types["lucas42/lucos_navbar"])
 	}
 	// A repo not in configy should be absent from the map.
@@ -169,7 +171,7 @@ func TestFetchRepoTypes_SystemTakesPrecedenceOverComponent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if types["lucas42/lucos_shared"] != RepoTypeSystem {
+	if types["lucas42/lucos_shared"] != conventions.RepoTypeSystem {
 		t.Errorf("expected lucos_shared to be system (not component), got %q", types["lucas42/lucos_shared"])
 	}
 }
@@ -241,8 +243,8 @@ func TestFetchRepos_Pagination(t *testing.T) {
 
 // TestAppliesToType_NoAppliesTo verifies a convention with no AppliesTo applies to all types.
 func TestAppliesToType_NoAppliesTo(t *testing.T) {
-	c := Convention{ID: "any-convention"}
-	for _, rt := range []RepoType{RepoTypeSystem, RepoTypeComponent, RepoTypeUnconfigured} {
+	c := conventions.Convention{ID: "any-convention"}
+	for _, rt := range []conventions.RepoType{conventions.RepoTypeSystem, conventions.RepoTypeComponent, conventions.RepoTypeUnconfigured} {
 		if !c.AppliesToType(rt) {
 			t.Errorf("expected convention with no AppliesTo to apply to %q, got false", rt)
 		}
@@ -251,17 +253,17 @@ func TestAppliesToType_NoAppliesTo(t *testing.T) {
 
 // TestAppliesToType_Restricted verifies a convention with AppliesTo only matches declared types.
 func TestAppliesToType_Restricted(t *testing.T) {
-	c := Convention{
+	c := conventions.Convention{
 		ID:        "systems-only",
-		AppliesTo: []RepoType{RepoTypeSystem},
+		AppliesTo: []conventions.RepoType{conventions.RepoTypeSystem},
 	}
-	if !c.AppliesToType(RepoTypeSystem) {
+	if !c.AppliesToType(conventions.RepoTypeSystem) {
 		t.Error("expected convention to apply to system repos")
 	}
-	if c.AppliesToType(RepoTypeComponent) {
+	if c.AppliesToType(conventions.RepoTypeComponent) {
 		t.Error("expected convention NOT to apply to component repos")
 	}
-	if c.AppliesToType(RepoTypeUnconfigured) {
+	if c.AppliesToType(conventions.RepoTypeUnconfigured) {
 		t.Error("expected convention NOT to apply to unconfigured repos")
 	}
 }

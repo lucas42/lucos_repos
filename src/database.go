@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"lucos_repos/conventions"
 	_ "modernc.org/sqlite"
 )
 
@@ -115,7 +116,7 @@ func (db *DB) UpsertRepo(name string) error {
 }
 
 // SaveFinding inserts or updates a finding for a repo + convention pair.
-func (db *DB) SaveFinding(result ConventionResult, repo string, issueURL string) error {
+func (db *DB) SaveFinding(result conventions.ConventionResult, repo string, issueURL string) error {
 	passInt := 0
 	if result.Pass {
 		passInt = 1

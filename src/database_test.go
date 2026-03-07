@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"lucos_repos/conventions"
 )
 
 // openTestDB opens an in-memory SQLite database for testing.
@@ -155,7 +157,7 @@ func TestSaveFinding_Pass(t *testing.T) {
 		t.Fatalf("UpsertConvention failed: %v", err)
 	}
 
-	result := ConventionResult{
+	result := conventions.ConventionResult{
 		Convention: "test-convention",
 		Pass:       true,
 		Detail:     "file found",
@@ -200,7 +202,7 @@ func TestSaveFinding_Fail(t *testing.T) {
 		t.Fatalf("UpsertConvention failed: %v", err)
 	}
 
-	result := ConventionResult{
+	result := conventions.ConventionResult{
 		Convention: "test-convention",
 		Pass:       false,
 		Detail:     "file missing",
@@ -237,7 +239,7 @@ func TestSaveFinding_Upsert(t *testing.T) {
 		t.Fatalf("UpsertConvention failed: %v", err)
 	}
 
-	failing := ConventionResult{
+	failing := conventions.ConventionResult{
 		Convention: "test-convention",
 		Pass:       false,
 		Detail:     "file missing",
@@ -246,7 +248,7 @@ func TestSaveFinding_Upsert(t *testing.T) {
 		t.Fatalf("SaveFinding (fail) failed: %v", err)
 	}
 
-	passing := ConventionResult{
+	passing := conventions.ConventionResult{
 		Convention: "test-convention",
 		Pass:       true,
 		Detail:     "file found",
@@ -321,7 +323,7 @@ func TestGetStatusReport_AllPassing(t *testing.T) {
 	if err := db.UpsertConvention("conv-1", "First convention"); err != nil {
 		t.Fatalf("UpsertConvention failed: %v", err)
 	}
-	if err := db.SaveFinding(ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_a", ""); err != nil {
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_a", ""); err != nil {
 		t.Fatalf("SaveFinding failed: %v", err)
 	}
 
@@ -375,18 +377,18 @@ func TestGetStatusReport_WithViolations(t *testing.T) {
 	}
 
 	// repo_a: conv-1 passes, conv-2 fails.
-	if err := db.SaveFinding(ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_a", ""); err != nil {
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_a", ""); err != nil {
 		t.Fatalf("SaveFinding failed: %v", err)
 	}
-	if err := db.SaveFinding(ConventionResult{Convention: "conv-2", Pass: false, Detail: "missing"}, "lucas42/repo_a", "https://github.com/lucas42/repo_a/issues/1"); err != nil {
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-2", Pass: false, Detail: "missing"}, "lucas42/repo_a", "https://github.com/lucas42/repo_a/issues/1"); err != nil {
 		t.Fatalf("SaveFinding failed: %v", err)
 	}
 
 	// repo_b: both pass.
-	if err := db.SaveFinding(ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_b", ""); err != nil {
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/repo_b", ""); err != nil {
 		t.Fatalf("SaveFinding failed: %v", err)
 	}
-	if err := db.SaveFinding(ConventionResult{Convention: "conv-2", Pass: true, Detail: "ok"}, "lucas42/repo_b", ""); err != nil {
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-2", Pass: true, Detail: "ok"}, "lucas42/repo_b", ""); err != nil {
 		t.Fatalf("SaveFinding failed: %v", err)
 	}
 

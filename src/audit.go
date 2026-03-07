@@ -9,20 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
-)
 
-// RepoType categorises a repository based on its presence in lucos_configy.
-type RepoType string
-
-const (
-	// RepoTypeSystem is a repo that appears in configy's systems list.
-	RepoTypeSystem RepoType = "system"
-
-	// RepoTypeComponent is a repo that appears in configy's components list.
-	RepoTypeComponent RepoType = "component"
-
-	// RepoTypeUnconfigured is a repo not found in configy at all.
-	RepoTypeUnconfigured RepoType = "unconfigured"
+	"lucos_repos/conventions"
 )
 
 // configyBaseURL is the base URL for the lucos_configy API. It can be
@@ -183,16 +171,16 @@ func (s *AuditSweeper) sweep() error {
 	if err != nil {
 		// Non-fatal — we proceed with all repos typed as unconfigured.
 		slog.Warn("Failed to fetch configy data; treating all repos as unconfigured", "error", err)
-		repoTypes = map[string]RepoType{}
+		repoTypes = map[string]conventions.RepoType{}
 	}
 
-	conventions := AllConventions()
+	allConventions := conventions.All()
 	issueClient := s.issueClientFactory(token)
 
 	for _, repoName := range repos {
 		repoType, ok := repoTypes[repoName]
 		if !ok {
-			repoType = RepoTypeUnconfigured
+			repoType = conventions.RepoTypeUnconfigured
 		}
 
 		if err := s.db.UpsertRepo(repoName); err != nil {
@@ -200,14 +188,14 @@ func (s *AuditSweeper) sweep() error {
 			continue
 		}
 
-		ctx := RepoContext{
+		ctx := conventions.RepoContext{
 			Name:          repoName,
 			GitHubToken:   token,
 			Type:          repoType,
 			GitHubBaseURL: s.githubAPIBaseURL,
 		}
 
-		for _, convention := range conventions {
+		for _, convention := range allConventions {
 			// Skip conventions that don't apply to this repo type.
 			if !convention.AppliesToType(repoType) {
 				continue
@@ -285,15 +273,15 @@ func (s *AuditSweeper) fetchRepos(token string) ([]string, error) {
 
 // fetchRepoTypes fetches systems and components from lucos_configy and returns
 // a map of repo full_name (e.g. "lucas42/lucos_photos") to RepoType.
-func (s *AuditSweeper) fetchRepoTypes() (map[string]RepoType, error) {
-	result := map[string]RepoType{}
+func (s *AuditSweeper) fetchRepoTypes() (map[string]conventions.RepoType, error) {
+	result := map[string]conventions.RepoType{}
 
 	systems, err := s.fetchConfigySystems()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch configy systems: %w", err)
 	}
 	for _, sys := range systems {
-		result[s.githubOrg+"/"+sys.ID] = RepoTypeSystem
+		result[s.githubOrg+"/"+sys.ID] = conventions.RepoTypeSystem
 	}
 
 	components, err := s.fetchConfigyComponents()
@@ -303,7 +291,7 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]RepoType, error) {
 	for _, comp := range components {
 		// A repo that is both a system and a component keeps its system type.
 		if _, exists := result[s.githubOrg+"/"+comp.ID]; !exists {
-			result[s.githubOrg+"/"+comp.ID] = RepoTypeComponent
+			result[s.githubOrg+"/"+comp.ID] = conventions.RepoTypeComponent
 		}
 	}
 

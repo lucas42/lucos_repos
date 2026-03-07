@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"lucos_repos/conventions"
 )
 
 type InfoResponse struct {
@@ -53,12 +55,12 @@ func main() {
 	defer db.Close()
 
 	// Sync all registered conventions into the database on startup.
-	for _, c := range AllConventions() {
+	for _, c := range conventions.All() {
 		if err := db.UpsertConvention(c.ID, c.Description); err != nil {
 			slog.Warn("Failed to sync convention to database", "convention", c.ID, "error", err)
 		}
 	}
-	slog.Info("Conventions synced to database", "count", len(AllConventions()))
+	slog.Info("Conventions synced to database", "count", len(conventions.All()))
 
 	sweeper := NewAuditSweeper(db, githubAuth, system)
 	sweeper.scheduleTrackerEndpoint = os.Getenv("SCHEDULE_TRACKER_ENDPOINT")
@@ -108,8 +110,8 @@ func main() {
 		info := InfoResponse{
 			System: system,
 			Checks: map[string]any{
-				"github-auth":   githubAuthCheck,
-				"database":      dbCheck,
+				"github-auth":          githubAuthCheck,
+				"database":             dbCheck,
 				"last-audit-completed": auditCheck,
 			},
 			Metrics: map[string]any{},

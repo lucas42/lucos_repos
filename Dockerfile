@@ -5,8 +5,9 @@ WORKDIR /go/src/lucos_repos
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY *.go ./
-RUN go build -o lucos_repos
+COPY conventions/ ./conventions/
+COPY src/ ./src/
+RUN go build -o lucos_repos ./src
 
 FROM debian:trixie-slim
 
