@@ -4,18 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 )
 
-// buildSearchResponse returns a JSON-encoded searchIssuesResponse for use in test servers.
-func buildSearchResponse(issues []gitHubIssue) []byte {
-	resp := searchIssuesResponse{
-		TotalCount: len(issues),
-		Items:      issues,
-	}
-	b, _ := json.Marshal(resp)
+// buildIssuesList returns a JSON-encoded slice of gitHubIssue for use in test servers.
+func buildIssuesList(issues []gitHubIssue) []byte {
+	b, _ := json.Marshal(issues)
 	return b
 }
 
@@ -29,13 +24,9 @@ func TestEnsureIssueExists_OpenIssueAlreadyExists(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
-			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
-			if !strings.Contains(q, title) {
-				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
-			}
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(buildSearchResponse([]gitHubIssue{
+			w.Write(buildIssuesList([]gitHubIssue{
 				{Number: 5, HTMLURL: existingURL, Title: title, State: "open"},
 			}))
 		case r.Method == "POST":
@@ -70,14 +61,10 @@ func TestEnsureIssueExists_CreatesNewIssue(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
-			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
-			if !strings.Contains(q, title) {
-				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
-			}
-			// No issues found — return empty result.
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			// No issues found for either open or closed queries.
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(buildSearchResponse([]gitHubIssue{}))
+			w.Write(buildIssuesList([]gitHubIssue{}))
 		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			createCalled = true
 			// Parse request to verify title and label.
@@ -139,18 +126,15 @@ func TestEnsureIssueExists_ReferencesClosedIssue(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
-			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
-			if !strings.Contains(q, title) {
-				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
-			}
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
-			if strings.Contains(q, "is:open") {
+			state := r.URL.Query().Get("state")
+			if state == "open" {
 				// No open issues.
-				w.Write(buildSearchResponse([]gitHubIssue{}))
+				w.Write(buildIssuesList([]gitHubIssue{}))
 			} else {
 				// One closed issue.
-				w.Write(buildSearchResponse([]gitHubIssue{
+				w.Write(buildIssuesList([]gitHubIssue{
 					{Number: 3, HTMLURL: closedURL, Title: title, State: "closed"},
 				}))
 			}
@@ -190,7 +174,7 @@ func TestEnsureIssueExists_ReferencesClosedIssue(t *testing.T) {
 	}
 }
 
-// TestEnsureIssueExists_ExactTitleMatch verifies that a search result with a
+// TestEnsureIssueExists_ExactTitleMatch verifies that a list result with a
 // different (but similar) title does not count as an existing open issue.
 func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
@@ -199,14 +183,10 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
-			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
-			if !strings.Contains(q, title) {
-				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
-			}
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
-			// Return a result with a different title — should be filtered out.
-			w.Write(buildSearchResponse([]gitHubIssue{
+			// Return a result with a different title — should be filtered out by local title check.
+			w.Write(buildIssuesList([]gitHubIssue{
 				{Number: 7, HTMLURL: "https://github.com/lucas42/test_repo/issues/7", Title: differentTitle, State: "open"},
 			}))
 		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
@@ -239,17 +219,11 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 // TestEnsureIssueExists_CreateError verifies that a GitHub API error during
 // issue creation propagates as an error.
 func TestEnsureIssueExists_CreateError(t *testing.T) {
-	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
-			q, _ := url.QueryUnescape(r.URL.Query().Get("q"))
-			if !strings.Contains(q, title) {
-				t.Errorf("expected search query to contain title %q, got q=%q", title, q)
-			}
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(buildSearchResponse([]gitHubIssue{}))
+			w.Write(buildIssuesList([]gitHubIssue{}))
 		case r.Method == "POST":
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			w.Write([]byte(`{"message":"Validation Failed"}`))
@@ -282,9 +256,9 @@ func TestEnsureIssueExists_IncludesRationaleAndGuidance(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(buildSearchResponse([]gitHubIssue{}))
+			w.Write(buildIssuesList([]gitHubIssue{}))
 		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			var payload createIssueRequest
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {

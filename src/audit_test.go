@@ -531,9 +531,9 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 			// File does not exist — conventions fail.
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"message":"Not Found"}`))
-		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_missing/issues"):
 			// No existing issues.
-			json.NewEncoder(w).Encode(searchIssuesResponse{TotalCount: 0, Items: []gitHubIssue{}})
+			json.NewEncoder(w).Encode([]gitHubIssue{})
 		case r.Method == "POST" && r.URL.Path == "/repos/lucas42/lucos_missing/issues":
 			issueCreated = true
 			w.WriteHeader(http.StatusCreated)
