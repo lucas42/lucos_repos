@@ -46,6 +46,57 @@ func TestAll_HasCircleCIConventionsRegistered(t *testing.T) {
 	}
 }
 
+// --- parseCIConfig: version key handling ---
+
+// TestParseCIConfig_HandlesWorkflowsVersionKey verifies that parseCIConfig does
+// not error when the workflows block contains the scalar `version: 2` key that
+// is present in virtually every real CircleCI config. This was previously broken
+// because yaml.v3 cannot unmarshal an integer into a ciWorkflow struct.
+func TestParseCIConfig_HandlesWorkflowsVersionKey(t *testing.T) {
+	yamlContent := `
+version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  version: 2
+  build-deploy:
+    jobs:
+      - lucos/build-amd64
+      - lucos/deploy-avalon:
+          requires:
+            - lucos/build-amd64
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write(circleCIResponse(yamlContent))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos",
+		Type:          RepoTypeSystem,
+		Hosts:         []string{"avalon"},
+		GitHubBaseURL: server.URL,
+	}
+
+	// All checks should pass — the version key must not cause a parse error.
+	for _, id := range []string{
+		"circleci-uses-lucos-orb",
+		"circleci-system-deploy-jobs",
+	} {
+		t.Run(id, func(t *testing.T) {
+			result := findConvention(t, id).Check(repo)
+			if !result.Pass {
+				t.Errorf("expected pass with workflows.version: 2 present, got fail: %s", result.Detail)
+			}
+		})
+	}
+}
+
 // --- circleci-config-exists ---
 
 // TestCircleCIConfigExists_PassesForSystem verifies the convention passes when
