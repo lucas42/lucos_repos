@@ -24,6 +24,12 @@ func TestAll_HasCircleCIConvention(t *testing.T) {
 			if c.Description == "" {
 				t.Error("has-circleci-config convention has empty description")
 			}
+			if c.Rationale == "" {
+				t.Error("has-circleci-config convention has empty rationale")
+			}
+			if c.Guidance == "" {
+				t.Error("has-circleci-config convention has empty guidance")
+			}
 			if c.Check == nil {
 				t.Error("has-circleci-config convention has nil Check function")
 			}

@@ -48,7 +48,8 @@ func TestEnsureIssueExists_OpenIssueAlreadyExists(t *testing.T) {
 	defer server.Close()
 
 	client := NewGitHubIssueClient(server.URL, "fake-token")
-	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", "has-circleci-config", "Repository has a .circleci/config.yml file")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", conv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +115,8 @@ func TestEnsureIssueExists_CreatesNewIssue(t *testing.T) {
 	defer server.Close()
 
 	client := NewGitHubIssueClient(server.URL, "fake-token")
-	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", "has-circleci-config", "Repository has a .circleci/config.yml file")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", conv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -175,7 +177,8 @@ func TestEnsureIssueExists_ReferencesClosedIssue(t *testing.T) {
 	defer server.Close()
 
 	client := NewGitHubIssueClient(server.URL, "fake-token")
-	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", "has-circleci-config", "Repository has a .circleci/config.yml file")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", conv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -222,7 +225,8 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 	defer server.Close()
 
 	client := NewGitHubIssueClient(server.URL, "fake-token")
-	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", "has-circleci-config", "Repository has a .circleci/config.yml file")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", conv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -256,9 +260,69 @@ func TestEnsureIssueExists_CreateError(t *testing.T) {
 	defer server.Close()
 
 	client := NewGitHubIssueClient(server.URL, "fake-token")
-	_, err := client.EnsureIssueExists("lucas42/test_repo", "has-circleci-config", "Repository has a .circleci/config.yml file")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	_, err := client.EnsureIssueExists("lucas42/test_repo", conv)
 	if err == nil {
 		t.Error("expected error when issue creation fails, got nil")
+	}
+}
+
+// TestEnsureIssueExists_IncludesRationaleAndGuidance verifies that when a
+// convention has Rationale and Guidance set, those appear in the created issue body.
+func TestEnsureIssueExists_IncludesRationaleAndGuidance(t *testing.T) {
+	const newURL = "https://github.com/lucas42/test_repo/issues/20"
+	conv := ConventionInfo{
+		ID:          "has-circleci-config",
+		Description: "Repository has a .circleci/config.yml file",
+		Rationale:   "Without CI, changes are not automatically deployed.",
+		Guidance:    "Add a .circleci/config.yml following the standard template.",
+	}
+	title := conventionIssueTitle(conv.ID, conv.Description)
+	var createdBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/search/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(buildSearchResponse([]gitHubIssue{}))
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			var payload createIssueRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("failed to decode create issue request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			createdBody = payload.Body
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(gitHubIssue{
+				Number:  20,
+				HTMLURL: newURL,
+				Title:   title,
+				State:   "open",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	_, err := client.EnsureIssueExists("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(createdBody, "**Why this matters:**") {
+		t.Errorf("expected body to contain rationale header, got: %q", createdBody)
+	}
+	if !strings.Contains(createdBody, conv.Rationale) {
+		t.Errorf("expected body to contain rationale text %q, got: %q", conv.Rationale, createdBody)
+	}
+	if !strings.Contains(createdBody, "**Suggested fix:**") {
+		t.Errorf("expected body to contain guidance header, got: %q", createdBody)
+	}
+	if !strings.Contains(createdBody, conv.Guidance) {
+		t.Errorf("expected body to contain guidance text %q, got: %q", conv.Guidance, createdBody)
 	}
 }
 

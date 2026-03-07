@@ -48,12 +48,22 @@ func NewGitHubIssueClient(baseURL, token string) *GitHubIssueClient {
 	}
 }
 
+// ConventionInfo holds the metadata for a convention that is used when creating
+// an audit-finding issue. This keeps the EnsureIssueExists signature manageable
+// as new fields are added.
+type ConventionInfo struct {
+	ID          string
+	Description string
+	Rationale   string
+	Guidance    string
+}
+
 // EnsureIssueExists checks whether an open audit-finding issue exists for the
 // given convention on the given repo. If one exists, it returns its URL.
 // If none exists, it creates a new one (referencing the most recent closed
 // issue if any) and returns the new issue's URL.
-func (c *GitHubIssueClient) EnsureIssueExists(repo, conventionID, conventionDescription string) (string, error) {
-	title := conventionIssueTitle(conventionID, conventionDescription)
+func (c *GitHubIssueClient) EnsureIssueExists(repo string, conv ConventionInfo) (string, error) {
+	title := conventionIssueTitle(conv.ID, conv.Description)
 
 	// Check for an existing open issue.
 	existingURL, err := c.findOpenIssue(repo, title)
@@ -61,7 +71,7 @@ func (c *GitHubIssueClient) EnsureIssueExists(repo, conventionID, conventionDesc
 		return "", fmt.Errorf("failed to search for existing issue: %w", err)
 	}
 	if existingURL != "" {
-		slog.Debug("Open audit-finding issue already exists", "repo", repo, "convention", conventionID, "url", existingURL)
+		slog.Debug("Open audit-finding issue already exists", "repo", repo, "convention", conv.ID, "url", existingURL)
 		return existingURL, nil
 	}
 
@@ -69,15 +79,15 @@ func (c *GitHubIssueClient) EnsureIssueExists(repo, conventionID, conventionDesc
 	previousURL, err := c.findMostRecentClosedIssue(repo, title)
 	if err != nil {
 		// Non-fatal — we can still create the issue without a back-reference.
-		slog.Warn("Failed to search for closed issues", "repo", repo, "convention", conventionID, "error", err)
+		slog.Warn("Failed to search for closed issues", "repo", repo, "convention", conv.ID, "error", err)
 	}
 
 	// Create a new issue.
-	newURL, err := c.createIssue(repo, title, conventionID, conventionDescription, previousURL)
+	newURL, err := c.createIssue(repo, title, conv, previousURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to create audit-finding issue: %w", err)
 	}
-	slog.Info("Created audit-finding issue", "repo", repo, "convention", conventionID, "url", newURL)
+	slog.Info("Created audit-finding issue", "repo", repo, "convention", conv.ID, "url", newURL)
 	return newURL, nil
 }
 
@@ -153,9 +163,19 @@ type createIssueRequest struct {
 
 // createIssue creates a new GitHub issue for a failing convention.
 // If previousURL is non-empty, the issue body references the previously closed issue.
-func (c *GitHubIssueClient) createIssue(repo, title, conventionID, conventionDescription, previousURL string) (string, error) {
-	body := fmt.Sprintf("The `%s` convention is failing for this repository.\n\n**Convention:** %s\n**Description:** %s\n\nThis issue was automatically raised by the lucos_repos audit tool.",
-		conventionID, conventionID, conventionDescription)
+func (c *GitHubIssueClient) createIssue(repo, title string, conv ConventionInfo, previousURL string) (string, error) {
+	body := fmt.Sprintf("The `%s` convention is failing for this repository.\n\n**Convention:** %s\n**Description:** %s",
+		conv.ID, conv.ID, conv.Description)
+
+	if conv.Rationale != "" {
+		body += fmt.Sprintf("\n\n**Why this matters:** %s", conv.Rationale)
+	}
+
+	if conv.Guidance != "" {
+		body += fmt.Sprintf("\n\n**Suggested fix:** %s", conv.Guidance)
+	}
+
+	body += "\n\nThis issue was automatically raised by the lucos_repos audit tool."
 
 	if previousURL != "" {
 		body += fmt.Sprintf("\n\nA previous issue for this convention was raised and closed: %s", previousURL)
