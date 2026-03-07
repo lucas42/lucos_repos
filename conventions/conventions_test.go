@@ -24,12 +24,6 @@ func TestAll_HasCircleCIConvention(t *testing.T) {
 			if c.Description == "" {
 				t.Error("has-circleci-config convention has empty description")
 			}
-			if c.Rationale == "" {
-				t.Error("has-circleci-config convention has empty rationale")
-			}
-			if c.Guidance == "" {
-				t.Error("has-circleci-config convention has empty guidance")
-			}
 			if c.Check == nil {
 				t.Error("has-circleci-config convention has nil Check function")
 			}
@@ -38,6 +32,22 @@ func TestAll_HasCircleCIConvention(t *testing.T) {
 	}
 	if !found {
 		t.Error("has-circleci-config convention not found in registry")
+	}
+}
+
+// TestAll_AllConventionsHaveRationaleAndGuidance verifies that every registered convention
+// has non-empty Rationale and Guidance fields, so new conventions can't slip through without them.
+func TestAll_AllConventionsHaveRationaleAndGuidance(t *testing.T) {
+	for _, c := range All() {
+		c := c
+		t.Run(c.ID+" has non-empty Rationale and Guidance", func(t *testing.T) {
+			if c.Rationale == "" {
+				t.Errorf("convention %q has empty Rationale", c.ID)
+			}
+			if c.Guidance == "" {
+				t.Errorf("convention %q has empty Guidance", c.ID)
+			}
+		})
 	}
 }
 
