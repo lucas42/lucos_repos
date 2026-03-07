@@ -25,6 +25,28 @@ func init() {
 			if base == "" {
 				base = GitHubBaseURL
 			}
+
+			// Non-Docker repos have no use for the lucos deploy orb, which
+			// provides Docker-specific build and deploy jobs. Treat the absence
+			// of docker-compose.yml as a signal that this repo does not use
+			// Docker-based deployment, and skip the check.
+			hasCompose, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml")
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "circleci-uses-lucos-orb", "repo", repo.Name, "step", "check-compose", "error", err)
+				return ConventionResult{
+					Convention: "circleci-uses-lucos-orb",
+					Pass:       false,
+					Detail:     fmt.Sprintf("Error checking for docker-compose.yml: %v", err),
+				}
+			}
+			if !hasCompose {
+				return ConventionResult{
+					Convention: "circleci-uses-lucos-orb",
+					Pass:       true,
+					Detail:     "docker-compose.yml not found; repo does not use Docker-based deployment",
+				}
+			}
+
 			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-uses-lucos-orb", "repo", repo.Name, "error", err)
