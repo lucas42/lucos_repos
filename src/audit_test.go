@@ -351,8 +351,8 @@ func TestFetchRepos_SinglePage(t *testing.T) {
 	if len(repos) != 2 {
 		t.Fatalf("expected 2 repos, got %d", len(repos))
 	}
-	if repos[0] != "lucas42/lucos_photos" {
-		t.Errorf("expected first repo 'lucas42/lucos_photos', got %q", repos[0])
+	if repos[0].FullName != "lucas42/lucos_photos" {
+		t.Errorf("expected first repo 'lucas42/lucos_photos', got %q", repos[0].FullName)
 	}
 }
 
@@ -819,5 +819,105 @@ func TestSweep_FullSuccessReturnsNil(t *testing.T) {
 
 	if err := s.sweep(); err != nil {
 		t.Fatalf("expected sweep() to return nil for a full successful sweep, got: %v", err)
+	}
+}
+
+// TestSweep_ArchivedRepoSkipped verifies that archived repos are excluded from
+// convention checks entirely, so no issue creation is attempted and the sweep
+// completes successfully.
+func TestSweep_ArchivedRepoSkipped(t *testing.T) {
+	issueAPICalled := false
+
+	// Fake GitHub API: one archived repo (no CI config, so conventions would
+	// fail — but the archived flag should cause it to be skipped entirely).
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/old_archived_repo", Archived: true},
+			})
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/old_archived_repo/issues"):
+			issueAPICalled = true
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"message":"Repository was archived so is read-only."}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("expected sweep() to return nil when only archived repos present, got: %v", err)
+	}
+	if issueAPICalled {
+		t.Error("expected no issue API calls for archived repos, but the issues endpoint was called")
+	}
+}
+
+// TestSweep_IssuesDisabledTreatedAsSoftFailure verifies that when a repo has
+// issues disabled (410 from GitHub), the sweep does not increment the skipped
+// count and returns nil (success), rather than treating it as an API error.
+func TestSweep_IssuesDisabledTreatedAsSoftFailure(t *testing.T) {
+	// Fake GitHub API: one non-archived repo with no CI config, but the issues
+	// API returns 410 (issues disabled).
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/no_issues_repo", Archived: false},
+			})
+		case r.URL.Path == "/repos/lucas42/no_issues_repo/contents/.circleci/config.yml":
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/no_issues_repo/issues"):
+			// Issues disabled on this repo.
+			w.WriteHeader(http.StatusGone)
+			w.Write([]byte(`{"message":"Issues has been disabled in this repository."}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "no_issues_repo", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("expected sweep() to return nil when issues are disabled (410), got: %v", err)
 	}
 }

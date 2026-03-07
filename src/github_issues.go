@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,11 @@ import (
 // auditFindingLabel is the label applied to all issues raised by the audit tool.
 // It is used to identify audit-raised issues when searching for existing ones.
 const auditFindingLabel = "audit-finding"
+
+// ErrIssuesUnavailable is returned when the GitHub Issues API responds with
+// 403 (repository archived / read-only) or 410 (issues disabled). These are
+// expected states for some repos and should not be treated as API errors.
+var ErrIssuesUnavailable = errors.New("issues unavailable for repo")
 
 // conventionIssueTitle returns the standardised issue title for a convention violation.
 // The format is: [Convention] <id>: <description>
@@ -152,9 +158,18 @@ func (c *GitHubIssueClient) fetchIssuesList(listURL string) ([]gitHubIssue, erro
 			return nil, fmt.Errorf("failed to read issues list response: %w", err)
 		}
 
+		if resp.StatusCode == http.StatusGone {
+			// 410 means issues have been disabled on this repo.
+			return nil, fmt.Errorf("GitHub issues list API returned 410 (issues disabled): %w", ErrIssuesUnavailable)
+		}
+
 		if resp.StatusCode == http.StatusForbidden {
 			if waitErr := handleRateLimitError(resp, body); waitErr != nil {
-				return nil, waitErr
+				if isRateLimitBody(body) {
+					return nil, waitErr
+				}
+				// Non-rate-limit 403 — repo is archived or otherwise read-only.
+				return nil, fmt.Errorf("%s: %w", waitErr.Error(), ErrIssuesUnavailable)
 			}
 			// Rate limit wait succeeded — loop to retry.
 			continue
@@ -239,6 +254,10 @@ func (c *GitHubIssueClient) createIssue(repo, title string, conv ConventionInfo,
 		return "", fmt.Errorf("failed to read create issue response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusGone {
+		// 403 = repo archived (read-only); 410 = issues disabled.
+		return "", fmt.Errorf("GitHub create issue API returned %d: %s: %w", resp.StatusCode, respBody, ErrIssuesUnavailable)
+	}
 	if resp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("GitHub create issue API returned %d: %s", resp.StatusCode, respBody)
 	}
