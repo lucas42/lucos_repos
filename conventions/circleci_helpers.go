@@ -9,7 +9,52 @@ import (
 // circleCIConfig is the subset of a CircleCI config.yml that we care about.
 type circleCIConfig struct {
 	Orbs      map[string]string     `yaml:"orbs"`
-	Workflows map[string]ciWorkflow `yaml:"workflows"`
+	Workflows map[string]ciWorkflow `yaml:"-"`
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler for circleCIConfig. The standard
+// struct decoder cannot handle the `workflows` block because it contains a
+// scalar `version: 2` key alongside the workflow map entries. We decode the
+// struct fields normally (via an alias type to avoid infinite recursion) and
+// then manually walk the workflows mapping node, skipping any scalar values.
+func (c *circleCIConfig) UnmarshalYAML(value *yaml.Node) error {
+	// aliasConfig breaks the recursion: decoding into it will NOT call this
+	// method again, so all non-workflows fields are decoded normally.
+	type aliasConfig struct {
+		Orbs      map[string]string `yaml:"orbs"`
+		Workflows yaml.Node         `yaml:"workflows"`
+	}
+	var raw aliasConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	c.Orbs = raw.Orbs
+
+	// workflows is optional — not all configs have it.
+	if raw.Workflows.Kind == 0 {
+		return nil
+	}
+	if raw.Workflows.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected workflows to be a mapping, got kind %v", raw.Workflows.Kind)
+	}
+
+	c.Workflows = make(map[string]ciWorkflow)
+	// MappingNode.Content is a flat list of alternating key/value nodes.
+	nodes := raw.Workflows.Content
+	for i := 0; i+1 < len(nodes); i += 2 {
+		keyNode := nodes[i]
+		valNode := nodes[i+1]
+		// Skip scalar values (e.g. `version: 2`) — they are not workflow defs.
+		if valNode.Kind != yaml.MappingNode {
+			continue
+		}
+		var wf ciWorkflow
+		if err := valNode.Decode(&wf); err != nil {
+			return fmt.Errorf("failed to decode workflow %q: %w", keyNode.Value, err)
+		}
+		c.Workflows[keyNode.Value] = wf
+	}
+	return nil
 }
 
 // ciWorkflow is the subset of a CircleCI workflow we care about.
