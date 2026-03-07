@@ -33,7 +33,7 @@ func init() {
 		Description: "Every service with a build: key in docker-compose.yml also defines a healthcheck:",
 		Rationale:   "Without a Docker healthcheck, `docker compose up -d` returns as soon as the container *starts*, not when it is ready to serve traffic. The deploy suppression mechanism in lucos_monitoring clears suppression at that moment — meaning monitoring polls `/_info` before the process is listening, causing a consistent blip after every deploy. Adding a healthcheck makes Docker wait until the service is actually healthy before signalling readiness.",
 		Guidance:    "Add a `healthcheck:` block to every service in `docker-compose.yml` that has a `build:` key. For HTTP services, a suitable target is the `/_info` endpoint, for example:\n\n```yaml\nhealthcheck:\n  test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost:${PORT}/_info\"]\n  interval: 10s\n  timeout: 5s\n  retries: 3\n  start_period: 15s\n```\n\nOff-the-shelf images (redis, postgres, etc.) are excluded — this rule only applies to services your repo builds from a Dockerfile.",
-		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
+		AppliesTo:   []RepoType{RepoTypeSystem},
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
 			if base == "" {

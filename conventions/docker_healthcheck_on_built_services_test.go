@@ -63,8 +63,8 @@ func TestDockerHealthcheck_Registered(t *testing.T) {
 	if !found.AppliesToType(RepoTypeSystem) {
 		t.Error("docker-healthcheck-on-built-services should apply to RepoTypeSystem")
 	}
-	if !found.AppliesToType(RepoTypeComponent) {
-		t.Error("docker-healthcheck-on-built-services should apply to RepoTypeComponent")
+	if found.AppliesToType(RepoTypeComponent) {
+		t.Error("docker-healthcheck-on-built-services should not apply to RepoTypeComponent")
 	}
 	if found.AppliesToType(RepoTypeUnconfigured) {
 		t.Error("docker-healthcheck-on-built-services should not apply to RepoTypeUnconfigured")
