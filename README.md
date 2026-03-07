@@ -4,38 +4,35 @@ Audits all lucos GitHub repositories against a set of coding conventions, raises
 
 ## Project structure
 
-All Go source lives in the root directory (single `main` package):
+```
+src/            Go source for the HTTP server and audit sweeper
+conventions/    Convention definitions (see below)
+docs/adr/       Architectural Decision Records
+```
 
-| File | Purpose |
-|---|---|
-| `main.go` | HTTP server, startup, `/_info` and `/api/status` endpoints |
-| `convention.go` | Convention registry, shared types (`Convention`, `RepoContext`, `ConventionResult`, `RepoType`), and GitHub API helpers |
-| `audit.go` | Audit sweep — iterates repos and conventions, persists results |
-| `database.go` | SQLite database access |
-| `github_auth.go` | GitHub App authentication |
-| `github_issues.go` | Opens and closes GitHub issues for convention failures |
+### The `src/` package
 
-Convention implementations follow the same pattern and live alongside these files (e.g. a future `has-codeowners.go` would sit here too).
+The main binary lives here. On startup it syncs all registered conventions to a SQLite database, then schedules a periodic audit sweep. The sweep checks every known repo against every applicable convention and raises (or closes) GitHub issues accordingly. Two HTTP endpoints are exposed: `/_info` for health/monitoring and `/api/status` for a machine-readable audit report.
 
-## Conventions
+### The `conventions/` package
 
-Each coding convention is a `Convention` value with an `ID`, `Description`, optional `AppliesTo` filter, and a `Check` function. Conventions register themselves at init time using `RegisterConvention` — no manual wiring is needed.
+Each coding convention is a `Convention` value with an `ID`, `Description`, optional `AppliesTo` filter, and a `Check` function. Conventions are held in a package-level registry and registered at init time.
 
-### Self-registration pattern
+#### Self-registration pattern
 
-Create a new `.go` file in the root directory named after the convention ID (e.g. `has-codeowners.go`) with a `package main` declaration and an `init()` function:
+Each convention lives in its own `.go` file inside `conventions/`. The file calls `Register(...)` inside an `init()` function so it is included in the registry automatically when the package is imported — no manual wiring needed:
 
 ```go
-package main
+package conventions
 
 func init() {
-    RegisterConvention(Convention{
-        ID:          "has-codeowners",
+    Register(Convention{
+        ID:          "my-new-convention",
         Description: "Every repo must have a CODEOWNERS file",
         Check: func(repo RepoContext) ConventionResult {
-            // ... check logic using GitHubFileExists, etc. ...
+            // ... check logic ...
             return ConventionResult{
-                Convention: "has-codeowners",
+                Convention: "my-new-convention",
                 Pass:       true,
                 Detail:     "CODEOWNERS found",
             }
@@ -44,15 +41,17 @@ func init() {
 }
 ```
 
-The `init()` function runs automatically when the binary starts, adding the convention to the global registry before the first audit sweep. No changes to `main.go` or any other file are needed.
+The `init()` function runs automatically when the binary starts, adding the convention to the global registry before the first audit sweep. No changes to any other file are needed.
 
-### AppliesTo
+#### Adding a new convention
 
-Use `AppliesTo: []RepoType{RepoTypeSystem}` (or `RepoTypeComponent`) if the convention only applies to a subset of repo types. Omit it to apply to all repos.
+1. Create a new `.go` file in `conventions/` named after the convention ID (e.g. `has-codeowners.go`).
+2. Declare `package conventions` at the top.
+3. Add an `init()` function that calls `Register(Convention{...})`.
+4. Use `AppliesTo: []RepoType{RepoTypeSystem}` (or `RepoTypeComponent`) if the convention only applies to a subset of repo types. Omit `AppliesTo` to apply to all repos.
+5. Add tests in `conventions/` alongside the implementation — see the existing `*_test.go` files for the pattern (fake HTTP servers via `httptest` work well for GitHub API calls).
 
-### Helpers
-
-`convention.go` provides `GitHubFileExists(token, repo, path string) (bool, error)` for the common case of checking whether a file exists in a repo. For tests, use `GitHubFileExistsFromBase` with a fake `httptest` server to avoid real network calls — see `convention_test.go` for examples.
+`conventions/conventions.go` defines the shared types (`Convention`, `RepoContext`, `ConventionResult`, `RepoType`) and helper utilities (`GitHubFileExists`, `GitHubFileExistsFromBase`) that convention checks can use.
 
 ## Running tests
 
