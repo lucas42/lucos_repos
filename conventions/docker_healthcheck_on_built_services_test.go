@@ -298,6 +298,133 @@ services:
 	}
 }
 
+// TestDockerHealthcheck_TestProfileServiceSkipped verifies that a built service
+// in the "test" docker-compose profile is not flagged, even without a healthcheck.
+func TestDockerHealthcheck_TestProfileServiceSkipped(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  test:
+    build: .
+    profiles:
+      - test
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/docker-compose.yml" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(composeFixture(compose))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "docker-healthcheck-on-built-services").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when only test-profile service lacks healthcheck, got fail: %s", result.Detail)
+	}
+}
+
+// TestDockerHealthcheck_NonTestProfileStillChecked verifies that a built service
+// in a non-test profile (e.g. "debug") is still checked and flagged.
+func TestDockerHealthcheck_NonTestProfileStillChecked(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  debug:
+    build: .
+    profiles:
+      - debug
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/docker-compose.yml" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(composeFixture(compose))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "docker-healthcheck-on-built-services").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail when non-test-profile service lacks healthcheck, got pass: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "debug") {
+		t.Errorf("expected detail to mention 'debug', got: %s", result.Detail)
+	}
+}
+
+// TestDockerHealthcheck_MultipleProfilesIncludingTest verifies that a service
+// belonging to multiple profiles, one of which is "test", is skipped.
+func TestDockerHealthcheck_MultipleProfilesIncludingTest(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  test-worker:
+    build: .
+    profiles:
+      - test
+      - ci
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/docker-compose.yml" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(composeFixture(compose))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "docker-healthcheck-on-built-services").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when service with test profile (and others) lacks healthcheck, got fail: %s", result.Detail)
+	}
+}
+
 // TestDockerHealthcheck_APIError verifies the convention fails gracefully when
 // the GitHub API returns an unexpected error.
 func TestDockerHealthcheck_APIError(t *testing.T) {
