@@ -22,6 +22,20 @@ type composeFile struct {
 type composeService struct {
 	Build       interface{} `yaml:"build"`
 	Healthcheck interface{} `yaml:"healthcheck"`
+	Profiles    []string    `yaml:"profiles"`
+}
+
+// isTestProfileService reports whether a service belongs to the "test"
+// docker-compose profile. Services in the test profile are only used for
+// running tests and are never deployed, so deployment-readiness conventions
+// (healthchecks, etc.) do not apply to them.
+func isTestProfileService(svc composeService) bool {
+	for _, p := range svc.Profiles {
+		if p == "test" {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
@@ -71,7 +85,7 @@ func init() {
 
 			var missing []string
 			for name, svc := range compose.Services {
-				if svc.Build != nil && svc.Healthcheck == nil {
+				if svc.Build != nil && svc.Healthcheck == nil && !isTestProfileService(svc) {
 					missing = append(missing, name)
 				}
 			}
