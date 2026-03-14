@@ -955,7 +955,7 @@ func TestSweep_DeletesStaleFindings(t *testing.T) {
 	}
 }
 
-// TestSweep_DoesNotDeleteFindingsOnIncompletesSweep verifies that stale findings
+// TestSweep_DoesNotDeleteFindingsOnIncompleteSweep verifies that stale findings
 // are NOT cleaned up when the sweep is incomplete (skippedCount > 0).
 func TestSweep_DoesNotDeleteFindingsOnIncompleteSweep(t *testing.T) {
 	// Fake GitHub API: one active repo, but the issues API returns a transient
