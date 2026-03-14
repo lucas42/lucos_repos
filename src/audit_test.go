@@ -875,6 +875,56 @@ func TestSweep_ArchivedRepoSkipped(t *testing.T) {
 	}
 }
 
+// TestSweep_ForkedRepoSkipped verifies that forked repos are excluded from
+// convention checks entirely, so no issue creation is attempted and the sweep
+// completes successfully.
+func TestSweep_ForkedRepoSkipped(t *testing.T) {
+	issueAPICalled := false
+
+	// Fake GitHub API: one forked repo (no CI config, so conventions would
+	// fail — but the fork flag should cause it to be skipped entirely).
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/some_upstream_fork", Fork: true},
+			})
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/some_upstream_fork/issues"):
+			issueAPICalled = true
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("expected sweep() to return nil when only forked repos present, got: %v", err)
+	}
+	if issueAPICalled {
+		t.Error("expected no issue API calls for forked repos, but the issues endpoint was called")
+	}
+}
+
 // TestSweep_DeletesStaleFindings verifies that a successful sweep removes findings
 // for repo+convention pairs that are no longer in scope (e.g. archived/removed repos).
 func TestSweep_DeletesStaleFindings(t *testing.T) {
