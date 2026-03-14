@@ -421,3 +421,94 @@ func TestGetStatusReport_WithViolations(t *testing.T) {
 		t.Error("repo_b should be compliant")
 	}
 }
+
+// TestDeleteStaleFindings_DeletesOldRows verifies that findings older than the
+// cutoff are removed while newer ones are preserved.
+func TestDeleteStaleFindings_DeletesOldRows(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.UpsertRepo("lucas42/repo_a"); err != nil {
+		t.Fatalf("UpsertRepo failed: %v", err)
+	}
+	if err := db.UpsertConvention("conv-old", "Old convention"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+	if err := db.UpsertConvention("conv-new", "New convention"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+
+	// Insert a stale finding directly with a timestamp in the past.
+	past := time.Now().Add(-10 * time.Minute)
+	if _, err := db.conn.Exec(
+		`INSERT INTO findings (repo, convention, pass, detail, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"lucas42/repo_a", "conv-old", 1, "was passing", past.UTC(),
+	); err != nil {
+		t.Fatalf("failed to insert stale finding: %v", err)
+	}
+
+	// Save a fresh finding via SaveFinding (which sets updated_at = now).
+	cutoff := time.Now()
+	result := conventions.ConventionResult{Convention: "conv-new", Pass: true, Detail: "still in scope"}
+	if err := db.SaveFinding(result, "lucas42/repo_a", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	if err := db.DeleteStaleFindings(cutoff); err != nil {
+		t.Fatalf("DeleteStaleFindings failed: %v", err)
+	}
+
+	findings, err := db.GetFindings()
+	if err != nil {
+		t.Fatalf("GetFindings failed: %v", err)
+	}
+
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding after cleanup, got %d", len(findings))
+	}
+	if findings[0].Convention != "conv-new" {
+		t.Errorf("expected conv-new to survive, got %q", findings[0].Convention)
+	}
+}
+
+// TestDeleteStaleFindings_NoRows verifies that calling DeleteStaleFindings on an
+// empty table does not return an error.
+func TestDeleteStaleFindings_NoRows(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.DeleteStaleFindings(time.Now()); err != nil {
+		t.Errorf("DeleteStaleFindings on empty table returned error: %v", err)
+	}
+}
+
+// TestDeleteStaleFindings_PreservesAll verifies that when all findings are newer
+// than the cutoff, none are deleted.
+func TestDeleteStaleFindings_PreservesAll(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.UpsertRepo("lucas42/repo_a"); err != nil {
+		t.Fatalf("UpsertRepo failed: %v", err)
+	}
+	if err := db.UpsertConvention("conv-1", "A convention"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+
+	// Use a cutoff in the past so all findings are "newer".
+	cutoff := time.Now().Add(-1 * time.Hour)
+
+	result := conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}
+	if err := db.SaveFinding(result, "lucas42/repo_a", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	if err := db.DeleteStaleFindings(cutoff); err != nil {
+		t.Fatalf("DeleteStaleFindings failed: %v", err)
+	}
+
+	findings, err := db.GetFindings()
+	if err != nil {
+		t.Fatalf("GetFindings failed: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Errorf("expected 1 finding to survive, got %d", len(findings))
+	}
+}
