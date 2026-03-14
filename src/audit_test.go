@@ -873,6 +873,170 @@ func TestSweep_ArchivedRepoSkipped(t *testing.T) {
 	}
 }
 
+// TestSweep_DeletesStaleFindings verifies that a successful sweep removes findings
+// for repo+convention pairs that are no longer in scope (e.g. archived/removed repos).
+func TestSweep_DeletesStaleFindings(t *testing.T) {
+	// Fake GitHub API: only lucos_active exists; lucos_removed is gone.
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_active"},
+			})
+		case r.URL.Path == "/repos/lucas42/lucos_active/contents/.circleci/config.yml":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(encodedCIConfig()))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_active", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	// Seed the DB with a stale finding for a repo that won't be swept.
+	// Insert the stale repo and a finding directly with a timestamp in the past.
+	if _, err := s.db.conn.Exec(
+		`INSERT INTO repos (name, last_audited) VALUES (?, ?)`,
+		"lucas42/lucos_removed", time.Now().Add(-1*time.Hour),
+	); err != nil {
+		t.Fatalf("failed to insert stale repo: %v", err)
+	}
+	staleConvID := conventions.All()[0].ID
+	if _, err := s.db.conn.Exec(
+		`INSERT INTO findings (repo, convention, pass, detail, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"lucas42/lucos_removed", staleConvID, 1, "old finding", time.Now().Add(-1*time.Hour),
+	); err != nil {
+		t.Fatalf("failed to insert stale finding: %v", err)
+	}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("sweep() returned error: %v", err)
+	}
+
+	findings, err := s.db.GetFindings()
+	if err != nil {
+		t.Fatalf("GetFindings failed: %v", err)
+	}
+
+	// All remaining findings should be for lucos_active only.
+	for _, f := range findings {
+		if f.Repo == "lucas42/lucos_removed" {
+			t.Errorf("stale finding for lucos_removed should have been deleted, but got: %+v", f)
+		}
+	}
+	// And there should be at least one finding for lucos_active.
+	found := false
+	for _, f := range findings {
+		if f.Repo == "lucas42/lucos_active" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected at least one finding for lucos_active after sweep")
+	}
+}
+
+// TestSweep_DoesNotDeleteFindingsOnIncompletesSweep verifies that stale findings
+// are NOT cleaned up when the sweep is incomplete (skippedCount > 0).
+func TestSweep_DoesNotDeleteFindingsOnIncompleteSweep(t *testing.T) {
+	// Fake GitHub API: one active repo, but the issues API returns a transient
+	// error so the sweep is marked incomplete.
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_active"},
+			})
+		case r.URL.Path == "/repos/lucas42/lucos_active/contents/.circleci/config.yml":
+			// No CI config — convention fails, triggering an issue API call.
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_active/issues"):
+			// Simulate a transient server error (not a 403/410 "unavailable" — a real error).
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message":"Internal Server Error"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_active", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	// Seed a stale finding.
+	if _, err := s.db.conn.Exec(
+		`INSERT INTO repos (name, last_audited) VALUES (?, ?)`,
+		"lucas42/lucos_removed", time.Now().Add(-1*time.Hour),
+	); err != nil {
+		t.Fatalf("failed to insert stale repo: %v", err)
+	}
+	staleConvID := conventions.All()[0].ID
+	if _, err := s.db.conn.Exec(
+		`INSERT INTO findings (repo, convention, pass, detail, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"lucas42/lucos_removed", staleConvID, 1, "old finding", time.Now().Add(-1*time.Hour),
+	); err != nil {
+		t.Fatalf("failed to insert stale finding: %v", err)
+	}
+
+	// Sweep should return an error (incomplete).
+	if err := s.sweep(); err == nil {
+		t.Fatal("expected sweep() to return an error for incomplete sweep, got nil")
+	}
+
+	// Stale finding must still be present.
+	findings, err := s.db.GetFindings()
+	if err != nil {
+		t.Fatalf("GetFindings failed: %v", err)
+	}
+
+	found := false
+	for _, f := range findings {
+		if f.Repo == "lucas42/lucos_removed" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("stale finding for lucos_removed should NOT have been deleted on an incomplete sweep")
+	}
+}
+
 // TestSweep_IssuesDisabledTreatedAsSoftFailure verifies that when a repo has
 // issues disabled (410 from GitHub), the sweep does not increment the skipped
 // count and returns nil (success), rather than treating it as an API error.

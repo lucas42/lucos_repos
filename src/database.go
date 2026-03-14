@@ -138,6 +138,25 @@ func (db *DB) SaveFinding(result conventions.ConventionResult, repo string, issu
 	return nil
 }
 
+// DeleteStaleFindings deletes all findings whose updated_at is before the given
+// cutoff time. This is called at the end of a successful audit sweep to remove
+// findings for repo+convention pairs that are no longer in scope (archived repos,
+// removed conventions, newly-excluded repos).
+func (db *DB) DeleteStaleFindings(cutoff time.Time) error {
+	result, err := db.conn.Exec(
+		`DELETE FROM findings WHERE updated_at < ?`,
+		cutoff.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete stale findings: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		slog.Info("Deleted stale findings", "count", n)
+	}
+	return nil
+}
+
 // nullableString converts an empty string to nil (stored as NULL in SQLite).
 func nullableString(s string) any {
 	if s == "" {

@@ -171,7 +171,10 @@ func (s *AuditSweeper) reportToScheduleTracker(status, message string) {
 // sweep fetches repos and configy data, then runs all conventions.
 // It returns an error if any convention checks were skipped due to API errors,
 // so that callers can report a degraded (rather than successful) status.
+// On a fully successful sweep, stale findings (for repo+convention pairs no
+// longer in scope) are deleted from the database.
 func (s *AuditSweeper) sweep() error {
+	start := time.Now()
 	token, err := s.githubAuth.GetInstallationToken()
 	if err != nil {
 		return fmt.Errorf("failed to get GitHub token: %w", err)
@@ -271,6 +274,14 @@ func (s *AuditSweeper) sweep() error {
 	if skippedCount > 0 {
 		return fmt.Errorf("sweep incomplete: %d convention check(s) skipped due to API errors", skippedCount)
 	}
+
+	// Clean up findings for repo+convention pairs no longer in scope.
+	// Only runs after a fully successful sweep to avoid deleting findings
+	// that were merely skipped due to transient API errors.
+	if err := s.db.DeleteStaleFindings(start); err != nil {
+		slog.Warn("Failed to clean up stale findings", "error", err)
+	}
+
 	return nil
 }
 
