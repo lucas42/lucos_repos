@@ -1044,6 +1044,7 @@ func TestSweep_DoesNotDeleteFindingsOnIncompleteSweep(t *testing.T) {
 // issues disabled (410 from GitHub), the sweep does not increment the skipped
 // count and returns nil (success), rather than treating it as an API error.
 func TestSweep_IssuesDisabledTreatedAsSoftFailure(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
 	// Fake GitHub API: one non-archived repo with no CI config, but the issues
 	// API returns 410 (issues disabled).
 	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
