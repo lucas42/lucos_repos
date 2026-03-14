@@ -538,6 +538,7 @@ func TestSweep_StoresFindings(t *testing.T) {
 // TestSweep_FailingConventionCreatesIssue verifies that when a convention fails,
 // the sweep creates an issue and stores its URL in the findings table.
 func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
 	const issueURL = "https://github.com/lucas42/lucos_missing/issues/1"
 	// The circleci-config-exists convention will fail since the file is absent.
 	issueCreated := false
@@ -725,6 +726,7 @@ func TestReportToScheduleTracker_NoEndpoint(t *testing.T) {
 // fails for one or more convention checks (e.g. due to rate limiting), sweep()
 // returns a non-nil error rather than silently reporting success.
 func TestSweep_IssueAPIErrorReturnsError(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
 	// Fake GitHub API: one repo with NO circleci config file (so conventions
 	// fail and the issue API is invoked), plus an issue list endpoint that
 	// returns 403 to simulate rate limiting.
@@ -958,6 +960,7 @@ func TestSweep_DeletesStaleFindings(t *testing.T) {
 // TestSweep_DoesNotDeleteFindingsOnIncompleteSweep verifies that stale findings
 // are NOT cleaned up when the sweep is incomplete (skippedCount > 0).
 func TestSweep_DoesNotDeleteFindingsOnIncompleteSweep(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
 	// Fake GitHub API: one active repo, but the issues API returns a transient
 	// error so the sweep is marked incomplete.
 	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

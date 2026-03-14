@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -249,19 +250,24 @@ func (s *AuditSweeper) sweep() error {
 					Guidance:    convention.Guidance,
 					Detail:      result.Detail,
 				}
-				var issueErr error
-				issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
-				if issueErr != nil {
-					if isIssuesUnavailableErr(issueErr) {
-						// 403/410 means issues are unavailable (archived or disabled) —
-						// this is an expected state, not an API error. Log and move on.
-						slog.Warn("Issues unavailable for repo, skipping issue creation",
-							"repo", repoName, "convention", convention.ID, "error", issueErr)
-					} else {
-						slog.Warn("Failed to ensure issue exists for failing convention",
-							"repo", repoName, "convention", convention.ID, "error", issueErr)
-						skippedCount++
+				if os.Getenv("ENVIRONMENT") == "production" {
+					var issueErr error
+					issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
+					if issueErr != nil {
+						if isIssuesUnavailableErr(issueErr) {
+							// 403/410 means issues are unavailable (archived or disabled) —
+							// this is an expected state, not an API error. Log and move on.
+							slog.Warn("Issues unavailable for repo, skipping issue creation",
+								"repo", repoName, "convention", convention.ID, "error", issueErr)
+						} else {
+							slog.Warn("Failed to ensure issue exists for failing convention",
+								"repo", repoName, "convention", convention.ID, "error", issueErr)
+							skippedCount++
+						}
 					}
+				} else {
+					slog.Info("Skipping issue creation in non-production environment",
+						"repo", repoName, "convention", convention.ID)
 				}
 			}
 
