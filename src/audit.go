@@ -49,6 +49,7 @@ type configyScript struct {
 type gitHubRepo struct {
 	FullName string `json:"full_name"`
 	Archived bool   `json:"archived"`
+	Fork     bool   `json:"fork"`
 }
 
 // scheduleTrackerPayload is the JSON body sent to the schedule tracker endpoint.
@@ -207,6 +208,12 @@ func (s *AuditSweeper) sweep() error {
 		// irrelevant and no new issues can be filed on them anyway.
 		if repo.Archived {
 			slog.Debug("Skipping archived repo", "repo", repo.FullName)
+			continue
+		}
+
+		// Forked repos follow the upstream owner's conventions, not ours.
+		if repo.Fork {
+			slog.Debug("Skipping forked repo", "repo", repo.FullName)
 			continue
 		}
 
