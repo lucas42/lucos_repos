@@ -58,10 +58,17 @@ type ConventionResult struct {
 	Convention string
 
 	// Pass is true if the repo satisfies the convention.
+	// Ignored when Err is non-nil.
 	Pass bool
 
 	// Detail provides human-readable context about the result (e.g. why it failed).
 	Detail string
+
+	// Err is non-nil when the check could not determine compliance due to a
+	// transient error (e.g. a 5xx response from the GitHub API). An errored
+	// result is not a convention failure — the sweep should skip issue creation
+	// and mark the sweep as incomplete so it will be retried.
+	Err error
 }
 
 // Convention defines a rule that repos are expected to follow.

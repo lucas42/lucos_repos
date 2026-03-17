@@ -35,8 +35,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "circleci-uses-lucos-orb", "repo", repo.Name, "step", "check-compose", "error", err)
 				return ConventionResult{
 					Convention: "circleci-uses-lucos-orb",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error checking for docker-compose.yml: %v", err),
+					Err:        fmt.Errorf("error checking for docker-compose.yml: %w", err),
 				}
 			}
 			if !hasCompose {
@@ -52,8 +51,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "circleci-uses-lucos-orb", "repo", repo.Name, "error", err)
 				return ConventionResult{
 					Convention: "circleci-uses-lucos-orb",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error reading config: %v", err),
+					Err:        fmt.Errorf("error reading config: %w", err),
 				}
 			}
 			if cfg == nil {

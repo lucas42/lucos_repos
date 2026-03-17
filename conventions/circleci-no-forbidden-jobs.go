@@ -41,8 +41,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "circleci-no-forbidden-jobs", "repo", repo.Name, "error", err)
 				return ConventionResult{
 					Convention: "circleci-no-forbidden-jobs",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error reading config: %v", err),
+					Err:        fmt.Errorf("error reading config: %w", err),
 				}
 			}
 			if cfg == nil {
