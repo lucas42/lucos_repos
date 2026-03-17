@@ -779,6 +779,62 @@ func TestSweep_IssueAPIErrorReturnsError(t *testing.T) {
 	}
 }
 
+// TestSweep_ConventionAPIErrorSkipsIssueCreation verifies that when a convention
+// check returns Err != nil (i.e. a transient GitHub API error prevented the
+// check from running), the sweep does NOT create a false-positive issue and
+// instead marks the sweep as incomplete (returns a non-nil error).
+func TestSweep_ConventionAPIErrorSkipsIssueCreation(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+
+	issueCreated := false
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_transient"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/contents/"):
+			// Simulate a transient server error for any file fetch (e.g. .circleci/config.yml).
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/issues"):
+			// This endpoint must NOT be called — a transient error is not a convention failure.
+			issueCreated = true
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]any{"number": 1, "html_url": "https://github.com/lucas42/lucos_transient/issues/1"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_transient", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	err := s.sweep()
+	if err == nil {
+		t.Error("expected sweep() to return an error (incomplete) when convention checks fail due to API errors, got nil")
+	}
+	if issueCreated {
+		t.Error("expected no issue to be created for a transient API error, but issue endpoint was called")
+	}
+}
+
 // TestSweep_FullSuccessReturnsNil verifies that sweep() returns nil when all
 // repos and conventions are processed without any API errors.
 func TestSweep_FullSuccessReturnsNil(t *testing.T) {

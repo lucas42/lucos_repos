@@ -247,6 +247,15 @@ func (s *AuditSweeper) sweep() error {
 
 			result := convention.Check(ctx)
 
+			if result.Err != nil {
+				// The check could not determine compliance — skip issue creation
+				// and mark the sweep as incomplete so it will be retried.
+				slog.Warn("Convention check indeterminate due to API error",
+					"repo", repoName, "convention", convention.ID, "error", result.Err)
+				skippedCount++
+				continue
+			}
+
 			issueURL := ""
 			if !result.Pass {
 				// Ensure an open audit-finding issue exists for this violation.

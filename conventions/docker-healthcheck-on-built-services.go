@@ -59,8 +59,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "docker-healthcheck-on-built-services", "repo", repo.Name, "step", "fetch-compose", "error", err)
 				return ConventionResult{
 					Convention: "docker-healthcheck-on-built-services",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error fetching docker-compose.yml: %v", err),
+					Err:        fmt.Errorf("error fetching docker-compose.yml: %w", err),
 				}
 			}
 

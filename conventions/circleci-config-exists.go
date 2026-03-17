@@ -27,8 +27,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "circleci-config-exists", "repo", repo.Name, "error", err)
 				return ConventionResult{
 					Convention: "circleci-config-exists",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error checking file: %v", err),
+					Err:        fmt.Errorf("error checking file: %w", err),
 				}
 			}
 			if exists {

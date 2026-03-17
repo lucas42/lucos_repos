@@ -425,8 +425,9 @@ services:
 	}
 }
 
-// TestDockerHealthcheck_APIError verifies the convention fails gracefully when
-// the GitHub API returns an unexpected error.
+// TestDockerHealthcheck_APIError verifies the convention returns an indeterminate
+// result (Err != nil) when the GitHub API returns an unexpected error, rather
+// than a false-positive Pass: false.
 func TestDockerHealthcheck_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -440,11 +441,8 @@ func TestDockerHealthcheck_APIError(t *testing.T) {
 	}
 
 	result := findConvention(t, "docker-healthcheck-on-built-services").Check(repo)
-	if result.Pass {
-		t.Errorf("expected fail when GitHub API returns an error, got pass: %s", result.Detail)
-	}
-	if !strings.Contains(result.Detail, "Error") {
-		t.Errorf("expected detail to mention error, got: %s", result.Detail)
+	if result.Err == nil {
+		t.Errorf("expected Err to be set when GitHub API returns 500, got nil (Pass=%v Detail=%q)", result.Pass, result.Detail)
 	}
 }
 

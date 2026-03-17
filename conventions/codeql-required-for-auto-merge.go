@@ -28,8 +28,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "codeql-required-for-auto-merge", "repo", repo.Name, "step", "check-auto-merge-workflow", "error", err)
 				return ConventionResult{
 					Convention: "codeql-required-for-auto-merge",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error checking for code-reviewer-auto-merge.yml: %v", err),
+					Err:        fmt.Errorf("error checking for code-reviewer-auto-merge.yml: %w", err),
 				}
 			}
 			if !hasAutoMerge {
@@ -46,8 +45,7 @@ func init() {
 				slog.Warn("Convention check failed", "convention", "codeql-required-for-auto-merge", "repo", repo.Name, "step", "fetch-branch-protection", "error", err)
 				return ConventionResult{
 					Convention: "codeql-required-for-auto-merge",
-					Pass:       false,
-					Detail:     fmt.Sprintf("Error fetching branch protection for main: %v", err),
+					Err:        fmt.Errorf("error fetching branch protection for main: %w", err),
 				}
 			}
 
