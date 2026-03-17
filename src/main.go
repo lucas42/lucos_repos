@@ -107,7 +107,7 @@ func main() {
 			auditCheck.Debug = sweepErr.Error()
 		} else if completedAt.IsZero() {
 			// First sweep hasn't finished yet — not an error, just not ready.
-			auditCheck.OK = false
+			auditCheck.OK = true
 			auditCheck.Debug = "No sweep has completed yet"
 		} else {
 			auditCheck.OK = true
