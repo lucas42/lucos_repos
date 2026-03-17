@@ -25,14 +25,16 @@ const githubAPIBaseURL = "https://api.github.com"
 
 // configySystem represents a single entry from the configy /systems endpoint.
 type configySystem struct {
-	ID    string   `json:"id"`
-	Hosts []string `json:"hosts"`
+	ID                    string   `json:"id"`
+	Hosts                 []string `json:"hosts"`
+	UnsupervisedAgentCode bool     `json:"unsupervisedAgentCode"`
 }
 
 // repoInfo holds the repo type and (for systems) the list of deployment hosts.
 type repoInfo struct {
-	Type  conventions.RepoType
-	Hosts []string
+	Type                  conventions.RepoType
+	Hosts                 []string
+	UnsupervisedAgentCode bool
 }
 
 // configyComponent represents a single entry from the configy /components endpoint.
@@ -229,11 +231,12 @@ func (s *AuditSweeper) sweep() error {
 		}
 
 		ctx := conventions.RepoContext{
-			Name:          repoName,
-			GitHubToken:   token,
-			Type:          info.Type,
-			Hosts:         info.Hosts,
-			GitHubBaseURL: s.githubAPIBaseURL,
+			Name:                  repoName,
+			GitHubToken:           token,
+			Type:                  info.Type,
+			Hosts:                 info.Hosts,
+			GitHubBaseURL:         s.githubAPIBaseURL,
+			UnsupervisedAgentCode: info.UnsupervisedAgentCode,
 		}
 
 		for _, convention := range allConventions {
@@ -389,8 +392,9 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]repoInfo, error) {
 	}
 	for _, sys := range systems {
 		result[s.githubOrg+"/"+sys.ID] = repoInfo{
-			Type:  conventions.RepoTypeSystem,
-			Hosts: sys.Hosts,
+			Type:                  conventions.RepoTypeSystem,
+			Hosts:                 sys.Hosts,
+			UnsupervisedAgentCode: sys.UnsupervisedAgentCode,
 		}
 	}
 

@@ -50,6 +50,11 @@ type RepoContext struct {
 	// GitHubBaseURL is the base URL for GitHub API calls. Defaults to
 	// GitHubBaseURL ("https://api.github.com") when empty.
 	GitHubBaseURL string
+
+	// UnsupervisedAgentCode indicates that this system repo has autonomous
+	// agent code enabled (unsupervisedAgentCode=true in lucos_configy).
+	// Only meaningful for RepoTypeSystem; always false for other types.
+	UnsupervisedAgentCode bool
 }
 
 // ConventionResult is the outcome of running a single convention against a repo.
@@ -250,6 +255,44 @@ type branchProtectionResponse struct {
 	} `json:"required_status_checks"`
 }
 
+// GitHubBranchProtectionEnabled returns true if the given branch has protection
+// rules enabled. It returns false (not an error) when the branch is unprotected.
+func GitHubBranchProtectionEnabled(token, repo, branch string) (bool, error) {
+	return GitHubBranchProtectionEnabledFromBase(GitHubBaseURL, token, repo, branch)
+}
+
+// GitHubBranchProtectionEnabledFromBase is the implementation of
+// GitHubBranchProtectionEnabled with an injectable base URL.
+func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string) (bool, error) {
+	url := fmt.Sprintf("%s/repos/%s/branches/%s/protection", baseURL, repo, branch)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		// Branch is unprotected or does not exist.
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
+	}
+}
+
 // GitHubRequiredStatusChecks returns the list of required status check names
 // configured on the given branch's protection rules. It returns an empty slice
 // if the branch is unprotected (404) or has no required status checks.
@@ -295,5 +338,53 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 		return []string{}, nil
 	default:
 		return nil, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
+	}
+}
+
+// gitHubDirEntry is a single file or directory entry from the GitHub Contents
+// API when called on a directory path.
+type gitHubDirEntry struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // "file", "dir", "symlink", etc.
+}
+
+// GitHubListDirectory lists the entries in a directory in a GitHub repository.
+// It returns (nil, nil) if the directory does not exist.
+func GitHubListDirectory(token, repo, path string) ([]gitHubDirEntry, error) {
+	return GitHubListDirectoryFromBase(GitHubBaseURL, token, repo, path)
+}
+
+// GitHubListDirectoryFromBase is the implementation of GitHubListDirectory
+// with an injectable base URL.
+func GitHubListDirectoryFromBase(baseURL, token, repo, path string) ([]gitHubDirEntry, error) {
+	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var entries []gitHubDirEntry
+		if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+			return nil, fmt.Errorf("failed to decode directory listing for %s in %s: %w", path, repo, err)
+		}
+		return entries, nil
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d listing directory %s in %s", resp.StatusCode, path, repo)
 	}
 }
