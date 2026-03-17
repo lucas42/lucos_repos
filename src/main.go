@@ -75,6 +75,11 @@ func main() {
 		http.ServeFile(w, r, "/app/lucos_navbar.js")
 	})
 
+	mux.HandleFunc("GET /icon", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		http.ServeFile(w, r, "/app/icon.png")
+	})
+
 	mux.HandleFunc("GET /_info", func(w http.ResponseWriter, r *http.Request) {
 		_, tokenErr := githubAuth.GetInstallationToken()
 		githubAuthCheck := Check{

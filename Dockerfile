@@ -21,5 +21,6 @@ RUN mkdir -p /data
 
 COPY --from=builder /go/src/lucos_repos/lucos_repos .
 COPY --from=navbar lucos_navbar.js .
+COPY src/icon.png .
 
 CMD ["./lucos_repos"]
