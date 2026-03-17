@@ -794,8 +794,10 @@ func TestSweep_ConventionAPIErrorSkipsIssueCreation(t *testing.T) {
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_transient"},
 			})
-		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/contents/"):
-			// Simulate a transient server error for any file fetch (e.g. .circleci/config.yml).
+		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/contents/"),
+			strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/branches/"):
+			// Simulate a transient server error for any file fetch or branch
+			// protection check (e.g. .circleci/config.yml, branches/main/protection).
 			w.WriteHeader(http.StatusInternalServerError)
 		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/issues"):
 			// This endpoint must NOT be called — a transient error is not a convention failure.
