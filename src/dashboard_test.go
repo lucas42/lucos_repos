@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -269,5 +270,184 @@ func TestDashboardHandler_MethodNotAllowed(t *testing.T) {
 
 	if w.Result().StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Result().StatusCode)
+	}
+}
+
+// TestWantsJSON verifies Accept header parsing.
+func TestWantsJSON(t *testing.T) {
+	cases := []struct {
+		accept string
+		want   bool
+	}{
+		{"", false},
+		{"text/html", false},
+		{"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", false},
+		{"application/json", true},
+		{"application/json, text/html", true},
+		{"*/*", true},
+		{"text/plain, */*", true},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", "/", nil)
+		if tc.accept != "" {
+			req.Header.Set("Accept", tc.accept)
+		}
+		got := wantsJSON(req)
+		if got != tc.want {
+			t.Errorf("Accept=%q: expected wantsJSON=%v, got %v", tc.accept, tc.want, got)
+		}
+	}
+}
+
+// TestBuildJSONResponse verifies the JSON structure produced from DashboardData.
+func TestBuildJSONResponse(t *testing.T) {
+	data := DashboardData{
+		Conventions: []string{"conv-a", "conv-b"},
+		Repos: []dashboardRepo{
+			{
+				Name:      "lucas42/repo_x",
+				Compliant: false,
+				Cells: []dashboardCell{
+					{Present: true, Pass: true, Detail: "ok"},
+					{Present: true, Pass: false, IssueURL: "https://github.com/lucas42/repo_x/issues/7"},
+				},
+			},
+			{
+				Name:      "lucas42/repo_y",
+				Compliant: true,
+				Cells: []dashboardCell{
+					{Present: false},
+					{Present: true, Pass: true, Detail: "ok"},
+				},
+			},
+		},
+	}
+
+	results := buildJSONResponse(data)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	rx := results[0]
+	if rx.Repo != "lucas42/repo_x" {
+		t.Errorf("unexpected repo name: %q", rx.Repo)
+	}
+	if rx.Checks["conv-a"].Status != "pass" {
+		t.Errorf("conv-a: expected pass, got %q", rx.Checks["conv-a"].Status)
+	}
+	if rx.Checks["conv-b"].Status != "fail" {
+		t.Errorf("conv-b: expected fail, got %q", rx.Checks["conv-b"].Status)
+	}
+	if rx.Checks["conv-b"].Issue != "https://github.com/lucas42/repo_x/issues/7" {
+		t.Errorf("conv-b: unexpected issue URL %q", rx.Checks["conv-b"].Issue)
+	}
+
+	ry := results[1]
+	if ry.Checks["conv-a"].Status != "na" {
+		t.Errorf("conv-a for repo_y: expected na, got %q", ry.Checks["conv-a"].Status)
+	}
+	if ry.Checks["conv-b"].Status != "pass" {
+		t.Errorf("conv-b for repo_y: expected pass, got %q", ry.Checks["conv-b"].Status)
+	}
+	if ry.Checks["conv-b"].Issue != "" {
+		t.Errorf("conv-b for repo_y: expected no issue URL, got %q", ry.Checks["conv-b"].Issue)
+	}
+}
+
+// TestDashboardHandler_JSON verifies the handler returns JSON when Accept: application/json.
+func TestDashboardHandler_JSON(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.UpsertRepo("lucas42/lucos_test"); err != nil {
+		t.Fatalf("UpsertRepo failed: %v", err)
+	}
+	if err := db.UpsertConvention("has-circleci-config", "Has a CircleCI config"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+	if err := db.SaveFinding(
+		conventions.ConventionResult{Convention: "has-circleci-config", Pass: false, Detail: "missing"},
+		"lucas42/lucos_test",
+		"https://github.com/lucas42/lucos_test/issues/9",
+	); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	newDashboardHandler(db)(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+	ct := res.Header.Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("expected application/json Content-Type, got %q", ct)
+	}
+	if vary := res.Header.Get("Vary"); vary != "Accept" {
+		t.Errorf("expected Vary: Accept, got %q", vary)
+	}
+
+	var results []jsonRepoResult
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 repo result, got %d", len(results))
+	}
+	if results[0].Repo != "lucas42/lucos_test" {
+		t.Errorf("unexpected repo: %q", results[0].Repo)
+	}
+	check, ok := results[0].Checks["has-circleci-config"]
+	if !ok {
+		t.Fatal("expected has-circleci-config check in result")
+	}
+	if check.Status != "fail" {
+		t.Errorf("expected status fail, got %q", check.Status)
+	}
+	if check.Issue != "https://github.com/lucas42/lucos_test/issues/9" {
+		t.Errorf("unexpected issue URL: %q", check.Issue)
+	}
+}
+
+// TestDashboardHandler_JSONDefault verifies that curl's default Accept (*/*) gets JSON.
+func TestDashboardHandler_JSONDefault(t *testing.T) {
+	db := openTestDB(t)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept", "*/*")
+	w := httptest.NewRecorder()
+	newDashboardHandler(db)(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+	ct := res.Header.Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("expected application/json Content-Type for */* Accept, got %q", ct)
+	}
+}
+
+// TestDashboardHandler_HTMLExplicit verifies that browser Accept headers still get HTML.
+func TestDashboardHandler_HTMLExplicit(t *testing.T) {
+	db := openTestDB(t)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	w := httptest.NewRecorder()
+	newDashboardHandler(db)(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+	ct := res.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type for browser Accept, got %q", ct)
+	}
+	if vary := res.Header.Get("Vary"); vary != "Accept" {
+		t.Errorf("expected Vary: Accept, got %q", vary)
 	}
 }
