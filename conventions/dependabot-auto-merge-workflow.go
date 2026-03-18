@@ -18,7 +18,7 @@ func init() {
 		ID:          "dependabot-auto-merge-workflow",
 		Description: "Repository has a Dependabot auto-merge workflow that references the shared reusable workflow",
 		Rationale:   "Without auto-merge configured, Dependabot PRs pile up and require manual merging. The shared reusable workflow ensures consistent auto-merge behaviour across all repos. Repos that implement their own logic drift from the standard and may miss security fixes applied to the central workflow.",
-		Guidance:    "Add a `.github/workflows/auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non: pull_request\n\njobs:\n  dependabot:\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main\n```",
+		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non: pull_request\n\njobs:\n  dependabot:\n    if: github.actor == 'dependabot[bot]'\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main\n```",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself — it cannot
@@ -31,12 +31,27 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/auto-merge.yml")
-			if err != nil {
-				slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-workflow", "error", err)
-				return ConventionResult{
-					Convention: "dependabot-auto-merge-workflow",
-					Err:        fmt.Errorf("error fetching auto-merge.yml: %w", err),
+			// Try the canonical new filename first, then fall back to the legacy name.
+			filenames := []string{
+				".github/workflows/dependabot-auto-merge.yml",
+				".github/workflows/auto-merge.yml",
+			}
+
+			var content []byte
+			var foundFilename string
+			for _, filename := range filenames {
+				c, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, filename)
+				if err != nil {
+					slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-workflow", "error", err)
+					return ConventionResult{
+						Convention: "dependabot-auto-merge-workflow",
+						Err:        fmt.Errorf("error fetching %s: %w", filename, err),
+					}
+				}
+				if c != nil {
+					content = c
+					foundFilename = filename
+					break
 				}
 			}
 
@@ -44,7 +59,7 @@ func init() {
 				return ConventionResult{
 					Convention: "dependabot-auto-merge-workflow",
 					Pass:       false,
-					Detail:     ".github/workflows/auto-merge.yml not found",
+					Detail:     ".github/workflows/dependabot-auto-merge.yml not found",
 				}
 			}
 
@@ -52,14 +67,14 @@ func init() {
 				return ConventionResult{
 					Convention: "dependabot-auto-merge-workflow",
 					Pass:       true,
-					Detail:     "auto-merge.yml references the shared reusable workflow",
+					Detail:     fmt.Sprintf("%s references the shared reusable workflow", foundFilename),
 				}
 			}
 
 			return ConventionResult{
 				Convention: "dependabot-auto-merge-workflow",
 				Pass:       false,
-				Detail:     fmt.Sprintf("auto-merge.yml does not reference the shared reusable workflow (%s)", dependabotAutoMergeReusableWorkflow),
+				Detail:     fmt.Sprintf("%s does not reference the shared reusable workflow (%s)", foundFilename, dependabotAutoMergeReusableWorkflow),
 			}
 		},
 	})
