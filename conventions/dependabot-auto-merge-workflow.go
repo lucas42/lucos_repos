@@ -18,7 +18,7 @@ func init() {
 		ID:          "dependabot-auto-merge-workflow",
 		Description: "Repository has a Dependabot auto-merge workflow that references the shared reusable workflow",
 		Rationale:   "Without auto-merge configured, Dependabot PRs pile up and require manual merging. The shared reusable workflow ensures consistent auto-merge behaviour across all repos. Repos that implement their own logic drift from the standard and may miss security fixes applied to the central workflow.",
-		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request_target:\n    types: [opened, synchronize, reopened]\n\njobs:\n  dependabot:\n    if: github.actor == 'dependabot[bot]'\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main\n```",
+		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request_target:\n    types: [opened, synchronize, reopened]\n\njobs:\n  dependabot:\n    if: github.event.pull_request.user.login == 'dependabot[bot]'\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main\n```",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself — it cannot
