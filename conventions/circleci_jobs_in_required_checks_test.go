@@ -50,8 +50,9 @@ func TestCircleCIJobsInRequiredChecks_AllPresent(t *testing.T) {
 		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
 			w.Write([]byte(encodedWorkflowConfig()))
 		case "/repos/lucas42/test_repo/branches/main/protection":
-			// "lucos/build-amd64" is the check name GitHub sees for the orb job.
-			w.Write([]byte(encodedProtectionWithChecks([]string{"test", "lucos/build-amd64"})))
+			// GitHub prefixes CircleCI check names with "ci/circleci: ".
+			// The orb job "lucos/build-amd64" (named via its key) also gets this prefix.
+			w.Write([]byte(encodedProtectionWithChecks([]string{"ci/circleci: test", "ci/circleci: lucos/build-amd64"})))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -82,8 +83,8 @@ func TestCircleCIJobsInRequiredChecks_MissingJob(t *testing.T) {
 		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
 			w.Write([]byte(encodedWorkflowConfig()))
 		case "/repos/lucas42/test_repo/branches/main/protection":
-			// Only "test" is required — "lucos/build-amd64" is missing.
-			w.Write([]byte(encodedProtectionWithChecks([]string{"test"})))
+			// Only "test" is required (with prefix) — "build" is missing.
+			w.Write([]byte(encodedProtectionWithChecks([]string{"ci/circleci: test"})))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

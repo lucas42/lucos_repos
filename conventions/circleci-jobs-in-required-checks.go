@@ -78,9 +78,13 @@ func init() {
 				}
 			}
 
+			// GitHub prefixes CircleCI check names with "ci/circleci: " (e.g.
+			// "ci/circleci: test"). Strip that prefix so the lookup matches the
+			// bare job names extracted from .circleci/config.yml.
+			const circlePrefix = "ci/circleci: "
 			requiredSet := make(map[string]bool, len(checks))
 			for _, c := range checks {
-				requiredSet[c] = true
+				requiredSet[strings.TrimPrefix(c, circlePrefix)] = true
 			}
 
 			// Step 3: verify every test/build job is in required status checks.
