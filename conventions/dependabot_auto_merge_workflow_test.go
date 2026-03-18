@@ -18,6 +18,7 @@ on: pull_request
 
 jobs:
   dependabot:
+    if: github.actor == 'dependabot[bot]'
     uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
 `
 
@@ -32,12 +33,12 @@ jobs:
       - run: gh pr merge --auto --merge "$PR_URL"
 `
 
-// TestDependabotAutoMergeWorkflow_ValidWorkflow verifies that a workflow
-// referencing the shared reusable workflow passes.
-func TestDependabotAutoMergeWorkflow_ValidWorkflow(t *testing.T) {
+// TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename verifies that a workflow
+// at the canonical new filename passes.
+func TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/auto-merge.yml" {
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
 			return
 		}
@@ -58,12 +59,38 @@ func TestDependabotAutoMergeWorkflow_ValidWorkflow(t *testing.T) {
 	}
 }
 
+// TestDependabotAutoMergeWorkflow_ValidWorkflow_LegacyFilename verifies that a workflow
+// at the legacy auto-merge.yml filename still passes (fallback support).
+func TestDependabotAutoMergeWorkflow_ValidWorkflow_LegacyFilename(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true for legacy filename, got Detail=%q", result.Detail)
+	}
+}
+
 // TestDependabotAutoMergeWorkflow_InlineWorkflow verifies that a workflow
 // with inline logic (not using the reusable workflow) fails.
 func TestDependabotAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/auto-merge.yml" {
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(invalidDependabotAutoMergeYAML)))
 			return
 		}
