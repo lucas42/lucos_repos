@@ -2,10 +2,12 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 )
 
 //go:embed templates/index.html.tmpl
@@ -110,6 +112,67 @@ func BuildDashboardData(report StatusReport) DashboardData {
 	}
 }
 
+// jsonCheckResult is a single check entry in the JSON API response.
+type jsonCheckResult struct {
+	Status string `json:"status"`
+	Issue  string `json:"issue,omitempty"`
+}
+
+// jsonRepoResult is one repo row in the JSON API response.
+type jsonRepoResult struct {
+	Repo   string                     `json:"repo"`
+	Checks map[string]jsonCheckResult `json:"checks"`
+}
+
+// buildJSONResponse converts DashboardData into the slice used for JSON output.
+func buildJSONResponse(data DashboardData) []jsonRepoResult {
+	results := make([]jsonRepoResult, 0, len(data.Repos))
+	for _, row := range data.Repos {
+		checks := make(map[string]jsonCheckResult, len(data.Conventions))
+		for i, conv := range data.Conventions {
+			cell := row.Cells[i]
+			var cr jsonCheckResult
+			switch {
+			case !cell.Present:
+				cr.Status = "na"
+			case cell.Pass:
+				cr.Status = "pass"
+			default:
+				cr.Status = "fail"
+				cr.Issue = cell.IssueURL
+			}
+			checks[conv] = cr
+		}
+		results = append(results, jsonRepoResult{
+			Repo:   row.Name,
+			Checks: checks,
+		})
+	}
+	return results
+}
+
+// wantsJSON returns true when the request's Accept header prefers JSON over HTML.
+// curl's default Accept is */* which should resolve to JSON; browsers send text/html first.
+func wantsJSON(r *http.Request) bool {
+	accept := r.Header.Get("Accept")
+	if accept == "" {
+		return false
+	}
+	// Walk through comma-separated media ranges in order and return true if
+	// application/json appears before text/html (or if */* appears without text/html).
+	for _, part := range strings.Split(accept, ",") {
+		mediaType := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
+		switch mediaType {
+		case "application/json":
+			return true
+		case "text/html":
+			return false
+		}
+	}
+	// */* or other wildcard without explicit text/html preference → JSON.
+	return true
+}
+
 // newDashboardHandler returns the GET / handler backed by the given DB.
 func newDashboardHandler(db *DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +184,15 @@ func newDashboardHandler(db *DB) http.HandlerFunc {
 		}
 
 		data := BuildDashboardData(report)
+
+		if wantsJSON(r) {
+			results := buildJSONResponse(data)
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(results); err != nil {
+				slog.Error("Failed to encode JSON response", "error", err)
+			}
+			return
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := dashboardTemplate.Execute(w, data); err != nil {
