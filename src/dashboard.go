@@ -185,6 +185,8 @@ func newDashboardHandler(db *DB) http.HandlerFunc {
 
 		data := BuildDashboardData(report)
 
+		w.Header().Set("Vary", "Accept")
+
 		if wantsJSON(r) {
 			results := buildJSONResponse(data)
 			w.Header().Set("Content-Type", "application/json")

@@ -385,6 +385,9 @@ func TestDashboardHandler_JSON(t *testing.T) {
 	if ct != "application/json" {
 		t.Errorf("expected application/json Content-Type, got %q", ct)
 	}
+	if vary := res.Header.Get("Vary"); vary != "Accept" {
+		t.Errorf("expected Vary: Accept, got %q", vary)
+	}
 
 	var results []jsonRepoResult
 	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
@@ -443,5 +446,8 @@ func TestDashboardHandler_HTMLExplicit(t *testing.T) {
 	ct := res.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("expected text/html Content-Type for browser Accept, got %q", ct)
+	}
+	if vary := res.Header.Get("Vary"); vary != "Accept" {
+		t.Errorf("expected Vary: Accept, got %q", vary)
 	}
 }
