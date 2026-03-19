@@ -49,6 +49,10 @@
 		.stat-card.good .value { color: #198754; }
 		.stat-card.bad  .value { color: #dc3545; }
 		.stat-card.neutral .value { color: #0d6efd; }
+		.stat-card .value.timestamp {
+			font-size: 0.95rem;
+			font-weight: 400;
+		}
 		table {
 			border-collapse: collapse;
 			background: #fff;
@@ -147,6 +151,14 @@
 			<div class="stat-card {{if eq .Summary.TotalRepos 0}}neutral{{else if eq .Summary.TotalRepos .Summary.CompliantRepos}}good{{else}}bad{{end}}">
 				<div class="label">Compliance %</div>
 				<div class="value">{{.CompliancePct}}%</div>
+			</div>
+			<div class="stat-card neutral">
+				<div class="label">Last Audit</div>
+				{{if .LastAuditAt.IsZero}}
+				<div class="value timestamp">Never</div>
+				{{else}}
+				<div class="value timestamp" title="{{.LastAuditAt.UTC.Format "2006-01-02T15:04:05Z"}}">{{.LastAuditAt.UTC.Format "2 Jan 2006 15:04 UTC"}}</div>
+				{{end}}
 			</div>
 		</div>
 

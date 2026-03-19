@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"lucos_repos/conventions"
 )
@@ -49,6 +50,9 @@ type DashboardData struct {
 	// Summary statistics.
 	Summary       StatusSummary
 	CompliancePct int
+	// LastAuditAt is the time the most recent successful audit sweep completed.
+	// It is zero if no sweep has completed yet.
+	LastAuditAt time.Time
 }
 
 // BuildDashboardData converts a StatusReport into the data structure expected
@@ -179,8 +183,13 @@ func wantsJSON(r *http.Request) bool {
 	return true
 }
 
-// newDashboardHandler returns the GET / handler backed by the given DB.
-func newDashboardHandler(db *DB) http.HandlerFunc {
+// sweepStatusProvider is the subset of AuditSweeper used by the dashboard handler.
+type sweepStatusProvider interface {
+	Status() (completedAt time.Time, lastErr error)
+}
+
+// newDashboardHandler returns the GET / handler backed by the given DB and sweep status provider.
+func newDashboardHandler(db *DB, sweeper sweepStatusProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		report, err := db.GetStatusReport()
 		if err != nil {
@@ -190,6 +199,8 @@ func newDashboardHandler(db *DB) http.HandlerFunc {
 		}
 
 		data := BuildDashboardData(report)
+		lastAuditAt, _ := sweeper.Status()
+		data.LastAuditAt = lastAuditAt
 
 		w.Header().Set("Vary", "Accept")
 
