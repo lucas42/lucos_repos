@@ -1151,6 +1151,58 @@ func TestSweep_DoesNotDeleteFindingsOnIncompleteSweep(t *testing.T) {
 // TestSweep_IssuesDisabledTreatedAsSoftFailure verifies that when a repo has
 // issues disabled (410 from GitHub), the sweep does not increment the skipped
 // count and returns nil (success), rather than treating it as an API error.
+// TestSweep_ConfigyFailureAbortsSweptEntirely verifies that when the configy
+// fetch fails, the sweep returns an error without creating any findings or issues.
+// This prevents false-positive audit issues being raised for all repos.
+func TestSweep_ConfigyFailureAbortsSweptEntirely(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+
+	issueCreateCalled := false
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_photos"},
+			})
+		default:
+			// Any issue creation call would come through here.
+			if strings.Contains(r.URL.Path, "/issues") && r.Method == http.MethodPost {
+				issueCreateCalled = true
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	// Configy server returns 503 — simulating a transient DNS/network failure.
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	err := s.sweep()
+	if err == nil {
+		t.Fatal("expected sweep() to return an error when configy fetch fails, got nil")
+	}
+
+	if issueCreateCalled {
+		t.Error("expected no issues to be created when configy fetch fails, but issue creation was attempted")
+	}
+
+	findings, findErr := s.db.GetFindings()
+	if findErr != nil {
+		t.Fatalf("GetFindings failed: %v", findErr)
+	}
+	if len(findings) > 0 {
+		t.Errorf("expected no findings when configy fetch fails, got %d", len(findings))
+	}
+}
+
 func TestSweep_IssuesDisabledTreatedAsSoftFailure(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "production")
 	// Fake GitHub API: one non-archived repo with no CI config, but the issues
