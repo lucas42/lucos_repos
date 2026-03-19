@@ -225,7 +225,7 @@ func (s *AuditSweeper) sweep() error {
 			info = repoInfo{Type: conventions.RepoTypeUnconfigured}
 		}
 
-		if err := s.db.UpsertRepo(repoName); err != nil {
+		if err := s.db.UpsertRepo(repoName, info.Type); err != nil {
 			slog.Warn("Failed to upsert repo", "repo", repoName, "error", err)
 			continue
 		}

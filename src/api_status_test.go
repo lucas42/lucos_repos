@@ -53,7 +53,7 @@ func TestAPIStatus_EmptyDB(t *testing.T) {
 func TestAPIStatus_WithFindings(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/lucos_test"); err != nil {
+	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeUnconfigured); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("has-circleci-config", "Has a CircleCI config"); err != nil {

@@ -219,11 +219,11 @@ func TestDashboardHandler_EmptyDB(t *testing.T) {
 	}
 }
 
-// TestDashboardHandler_WithFindings verifies the handler shows repos and conventions.
+// TestDashboardHandler_WithFindings verifies the handler shows repos, conventions, and repo type.
 func TestDashboardHandler_WithFindings(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/lucos_test"); err != nil {
+	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeSystem); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("has-circleci-config", "Has a CircleCI config"); err != nil {
@@ -254,6 +254,9 @@ func TestDashboardHandler_WithFindings(t *testing.T) {
 	}
 	if !strings.Contains(body, "https://github.com/lucas42/lucos_test/issues/1") {
 		t.Error("expected page to contain issue URL link")
+	}
+	if !strings.Contains(body, "system") {
+		t.Error("expected page to contain repo type 'system'")
 	}
 }
 
@@ -306,6 +309,7 @@ func TestBuildJSONResponse(t *testing.T) {
 		Repos: []dashboardRepo{
 			{
 				Name:      "lucas42/repo_x",
+				RepoType:  conventions.RepoTypeSystem,
 				Compliant: false,
 				Cells: []dashboardCell{
 					{Present: true, Pass: true, Detail: "ok"},
@@ -314,6 +318,7 @@ func TestBuildJSONResponse(t *testing.T) {
 			},
 			{
 				Name:      "lucas42/repo_y",
+				RepoType:  conventions.RepoTypeComponent,
 				Compliant: true,
 				Cells: []dashboardCell{
 					{Present: false},
@@ -332,6 +337,9 @@ func TestBuildJSONResponse(t *testing.T) {
 	if rx.Repo != "lucas42/repo_x" {
 		t.Errorf("unexpected repo name: %q", rx.Repo)
 	}
+	if rx.RepoType != "system" {
+		t.Errorf("expected repo_type 'system', got %q", rx.RepoType)
+	}
 	if rx.Checks["conv-a"].Status != "pass" {
 		t.Errorf("conv-a: expected pass, got %q", rx.Checks["conv-a"].Status)
 	}
@@ -343,6 +351,9 @@ func TestBuildJSONResponse(t *testing.T) {
 	}
 
 	ry := results[1]
+	if ry.RepoType != "component" {
+		t.Errorf("expected repo_type 'component', got %q", ry.RepoType)
+	}
 	if ry.Checks["conv-a"].Status != "na" {
 		t.Errorf("conv-a for repo_y: expected na, got %q", ry.Checks["conv-a"].Status)
 	}
@@ -358,7 +369,7 @@ func TestBuildJSONResponse(t *testing.T) {
 func TestDashboardHandler_JSON(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/lucos_test"); err != nil {
+	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeSystem); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("has-circleci-config", "Has a CircleCI config"); err != nil {
@@ -398,6 +409,9 @@ func TestDashboardHandler_JSON(t *testing.T) {
 	}
 	if results[0].Repo != "lucas42/lucos_test" {
 		t.Errorf("unexpected repo: %q", results[0].Repo)
+	}
+	if results[0].RepoType != "system" {
+		t.Errorf("expected repo_type 'system', got %q", results[0].RepoType)
 	}
 	check, ok := results[0].Checks["has-circleci-config"]
 	if !ok {
