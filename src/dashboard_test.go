@@ -6,9 +6,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"lucos_repos/conventions"
 )
+
+// noopSweeper is a test stub that satisfies sweepStatusProvider with a zero timestamp.
+type noopSweeper struct{}
+
+func (noopSweeper) Status() (time.Time, error) { return time.Time{}, nil }
 
 // TestBuildDashboardData_Empty verifies the output when no findings exist.
 func TestBuildDashboardData_Empty(t *testing.T) {
@@ -196,7 +202,7 @@ func TestDashboardHandler_EmptyDB(t *testing.T) {
 	db := openTestDB(t)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", newDashboardHandler(db))
+	mux.HandleFunc("GET /", newDashboardHandler(db, noopSweeper{}))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -219,6 +225,64 @@ func TestDashboardHandler_EmptyDB(t *testing.T) {
 	}
 }
 
+// TestDashboardHandler_ShowsLastAuditTimestamp verifies the timestamp of the last successful
+// audit is displayed on the dashboard.
+func TestDashboardHandler_ShowsLastAuditTimestamp(t *testing.T) {
+	db := openTestDB(t)
+
+	fixedTime := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
+	sweeper := &fixedTimeSweeper{completedAt: fixedTime}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	newDashboardHandler(db, sweeper)(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Last Audit") {
+		t.Error("expected page to contain 'Last Audit' label")
+	}
+	if !strings.Contains(body, "19 Mar 2026") {
+		t.Errorf("expected page to contain '19 Mar 2026', body excerpt: %q", body[max(0, strings.Index(body, "Last Audit")-50):min(len(body), strings.Index(body, "Last Audit")+200)])
+	}
+}
+
+// TestDashboardHandler_ShowsNeverWhenNoAuditCompleted verifies that "Never" is shown
+// when no audit has completed yet.
+func TestDashboardHandler_ShowsNeverWhenNoAuditCompleted(t *testing.T) {
+	db := openTestDB(t)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	newDashboardHandler(db, noopSweeper{})(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Never") {
+		t.Error("expected page to contain 'Never' when no audit has completed")
+	}
+}
+
+// fixedTimeSweeper is a test stub that returns a fixed completion time.
+type fixedTimeSweeper struct {
+	completedAt time.Time
+}
+
+func (s *fixedTimeSweeper) Status() (time.Time, error) { return s.completedAt, nil }
+
+// max/min helpers for test body slicing.
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // TestDashboardHandler_WithFindings verifies the handler shows repos, conventions, and repo type.
 func TestDashboardHandler_WithFindings(t *testing.T) {
 	db := openTestDB(t)
@@ -239,7 +303,7 @@ func TestDashboardHandler_WithFindings(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	newDashboardHandler(db)(w, req)
+	newDashboardHandler(db, noopSweeper{})(w, req)
 
 	res := w.Result()
 	if res.StatusCode != http.StatusOK {
@@ -265,7 +329,7 @@ func TestDashboardHandler_MethodNotAllowed(t *testing.T) {
 	db := openTestDB(t)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", newDashboardHandler(db))
+	mux.HandleFunc("GET /", newDashboardHandler(db, noopSweeper{}))
 
 	req := httptest.NewRequest("POST", "/", nil)
 	w := httptest.NewRecorder()
@@ -386,7 +450,7 @@ func TestDashboardHandler_JSON(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Accept", "application/json")
 	w := httptest.NewRecorder()
-	newDashboardHandler(db)(w, req)
+	newDashboardHandler(db, noopSweeper{})(w, req)
 
 	res := w.Result()
 	if res.StatusCode != http.StatusOK {
@@ -432,7 +496,7 @@ func TestDashboardHandler_JSONDefault(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Accept", "*/*")
 	w := httptest.NewRecorder()
-	newDashboardHandler(db)(w, req)
+	newDashboardHandler(db, noopSweeper{})(w, req)
 
 	res := w.Result()
 	if res.StatusCode != http.StatusOK {
@@ -451,7 +515,7 @@ func TestDashboardHandler_HTMLExplicit(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	w := httptest.NewRecorder()
-	newDashboardHandler(db)(w, req)
+	newDashboardHandler(db, noopSweeper{})(w, req)
 
 	res := w.Result()
 	if res.StatusCode != http.StatusOK {

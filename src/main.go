@@ -68,7 +68,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /", newDashboardHandler(db))
+	mux.HandleFunc("GET /", newDashboardHandler(db, sweeper))
 
 	mux.HandleFunc("GET /lucos_navbar.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
