@@ -251,7 +251,13 @@ func GitHubFileContentFromBase(baseURL, token, repo, path string) ([]byte, error
 // response that we care about.
 type branchProtectionResponse struct {
 	RequiredStatusChecks *struct {
+		// Contexts is the legacy field populated by older GitHub UI and API calls.
 		Contexts []string `json:"contexts"`
+		// Checks is the modern field populated by the current GitHub UI.
+		// Each entry has a "context" field with the check name and an optional "app_id".
+		Checks []struct {
+			Context string `json:"context"`
+		} `json:"checks"`
 	} `json:"required_status_checks"`
 }
 
@@ -332,7 +338,14 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 		if protection.RequiredStatusChecks == nil {
 			return []string{}, nil
 		}
-		return protection.RequiredStatusChecks.Contexts, nil
+		// Merge both the legacy contexts field and the modern checks array.
+		// GitHub populates one or the other depending on how the check was configured.
+		result := make([]string, 0, len(protection.RequiredStatusChecks.Contexts)+len(protection.RequiredStatusChecks.Checks))
+		result = append(result, protection.RequiredStatusChecks.Contexts...)
+		for _, c := range protection.RequiredStatusChecks.Checks {
+			result = append(result, c.Context)
+		}
+		return result, nil
 	case http.StatusNotFound:
 		// Branch is either unprotected or doesn't exist — treat as no checks.
 		return []string{}, nil

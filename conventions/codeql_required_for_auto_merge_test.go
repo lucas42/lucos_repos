@@ -9,7 +9,8 @@ import (
 )
 
 // branchProtectionFixture builds a minimal branch protection JSON response
-// containing the given required status check context names.
+// containing the given required status check context names in the legacy
+// "contexts" field.
 func branchProtectionFixture(contexts []string) []byte {
 	type requiredStatusChecks struct {
 		Contexts []string `json:"contexts"`
@@ -19,6 +20,34 @@ func branchProtectionFixture(contexts []string) []byte {
 	}
 	b, _ := json.Marshal(response{
 		RequiredStatusChecks: requiredStatusChecks{Contexts: contexts},
+	})
+	return b
+}
+
+// branchProtectionFixtureWithChecks builds a branch protection JSON response
+// containing required status checks in the modern "checks" array (as populated
+// by the current GitHub UI), leaving "contexts" empty.
+func branchProtectionFixtureWithChecks(checkNames []string) []byte {
+	type checkEntry struct {
+		Context string `json:"context"`
+		AppID   int    `json:"app_id"`
+	}
+	type requiredStatusChecks struct {
+		Contexts []string     `json:"contexts"`
+		Checks   []checkEntry `json:"checks"`
+	}
+	type response struct {
+		RequiredStatusChecks requiredStatusChecks `json:"required_status_checks"`
+	}
+	entries := make([]checkEntry, len(checkNames))
+	for i, name := range checkNames {
+		entries[i] = checkEntry{Context: name, AppID: 12345}
+	}
+	b, _ := json.Marshal(response{
+		RequiredStatusChecks: requiredStatusChecks{
+			Contexts: []string{},
+			Checks:   entries,
+		},
 	})
 	return b
 }
@@ -296,6 +325,36 @@ func TestGitHubRequiredStatusChecks_ReturnsChecks(t *testing.T) {
 	}
 	if len(checks) != len(expected) {
 		t.Fatalf("expected %d checks, got %d: %v", len(expected), len(checks), checks)
+	}
+	for i, c := range checks {
+		if c != expected[i] {
+			t.Errorf("check[%d]: expected %q, got %q", i, expected[i], c)
+		}
+	}
+}
+
+// TestGitHubRequiredStatusChecks_ReturnsChecksFromModernArray verifies that
+// checks configured via the modern GitHub UI (in the "checks" array rather than
+// the legacy "contexts" field) are also returned by the helper.
+func TestGitHubRequiredStatusChecks_ReturnsChecksFromModernArray(t *testing.T) {
+	expected := []string{"Analyze (javascript-typescript)", "ci/circleci: test"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/test_repo/branches/main/protection" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(branchProtectionFixtureWithChecks(expected))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	checks, err := GitHubRequiredStatusChecksFromBase(server.URL, "fake-token", "lucas42/test_repo", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(checks) != len(expected) {
+		t.Fatalf("expected %d checks from modern checks array, got %d: %v", len(expected), len(checks), checks)
 	}
 	for i, c := range checks {
 		if c != expected[i] {
