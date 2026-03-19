@@ -192,9 +192,9 @@ func (s *AuditSweeper) sweep() error {
 
 	repoInfos, err := s.fetchRepoTypes()
 	if err != nil {
-		// Non-fatal — we proceed with all repos typed as unconfigured.
-		slog.Warn("Failed to fetch configy data; treating all repos as unconfigured", "error", err)
-		repoInfos = map[string]repoInfo{}
+		// Abort the sweep entirely — acting on incomplete configy data would create
+		// false-positive audit issues for every repo (e.g. false in-lucos-configy failures).
+		return fmt.Errorf("failed to fetch configy data: %w", err)
 	}
 
 	allConventions := conventions.All()
