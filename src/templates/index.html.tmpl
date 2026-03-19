@@ -87,6 +87,10 @@
 			font-family: monospace;
 			font-size: 0.85rem;
 		}
+		.repo-type {
+			font-size: 0.8rem;
+			color: #6c757d;
+		}
 		.cell-pass {
 			background: #d1e7dd;
 			color: #0a3622;
@@ -153,6 +157,7 @@
 			<thead>
 				<tr>
 					<th>Repository</th>
+					<th>Type</th>
 					<th>Status</th>
 					{{range .Conventions}}
 					<th class="convention-header" title="{{.}}">{{.}}</th>
@@ -163,6 +168,7 @@
 				{{range .Repos}}
 				<tr>
 					<td class="repo-name">{{.Name}}</td>
+					<td class="repo-type">{{.RepoType}}</td>
 					<td>
 						{{if .Compliant}}
 						<span class="compliance-badge badge-compliant">Compliant</span>

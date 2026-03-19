@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"lucos_repos/conventions"
 )
 
 //go:embed templates/index.html.tmpl
@@ -32,6 +34,7 @@ type dashboardCell struct {
 // dashboardRepo is a row in the compliance matrix.
 type dashboardRepo struct {
 	Name      string
+	RepoType  conventions.RepoType
 	Compliant bool
 	// Cells are ordered to match DashboardData.Conventions.
 	Cells []dashboardCell
@@ -93,6 +96,7 @@ func BuildDashboardData(report StatusReport) DashboardData {
 		}
 		rows = append(rows, dashboardRepo{
 			Name:      name,
+			RepoType:  rs.Type,
 			Compliant: rs.Compliant,
 			Cells:     cells,
 		})
@@ -120,8 +124,9 @@ type jsonCheckResult struct {
 
 // jsonRepoResult is one repo row in the JSON API response.
 type jsonRepoResult struct {
-	Repo   string                     `json:"repo"`
-	Checks map[string]jsonCheckResult `json:"checks"`
+	Repo     string                     `json:"repo"`
+	RepoType string                     `json:"repo_type"`
+	Checks   map[string]jsonCheckResult `json:"checks"`
 }
 
 // buildJSONResponse converts DashboardData into the slice used for JSON output.
@@ -144,8 +149,9 @@ func buildJSONResponse(data DashboardData) []jsonRepoResult {
 			checks[conv] = cr
 		}
 		results = append(results, jsonRepoResult{
-			Repo:   row.Name,
-			Checks: checks,
+			Repo:     row.Name,
+			RepoType: string(row.RepoType),
+			Checks:   checks,
 		})
 	}
 	return results
