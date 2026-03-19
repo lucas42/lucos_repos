@@ -1,0 +1,57 @@
+name: Audit dry-run
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  audit-dry-run:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build binary
+        working-directory: src
+        run: go build -o ../lucos_repos .
+
+      - name: Run dry-run audit sweep
+        run: ./lucos_repos audit --dry-run > candidate.json
+        env:
+          GITHUB_APP_ID: ${{ secrets.AUDIT_APP_ID }}
+          GITHUB_APP_PEM: ${{ secrets.AUDIT_APP_PEM }}
+
+      - name: Fetch production baseline
+        run: |
+          FETCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          curl -sf https://repos.l42.eu/api/status > baseline.json
+          echo "BASELINE_FETCHED_AT=${FETCHED_AT}" >> $GITHUB_ENV
+
+      - name: Compute diff and post PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          DIFF=$(./lucos_repos audit diff \
+            --baseline baseline.json \
+            --candidate candidate.json \
+            --fetched-at "$BASELINE_FETCHED_AT" \
+            --branch "$BRANCH")
+
+          # Find and delete any existing audit dry-run comment on this PR.
+          EXISTING_COMMENT_ID=$(gh api \
+            repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
+            --jq '[.[] | select(.body | startswith("## Audit dry-run diff")) | .id] | first // empty')
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            gh api repos/${{ github.repository }}/issues/comments/${EXISTING_COMMENT_ID} \
+              --method DELETE
+          fi
+
+          # Post the new diff as a PR comment.
+          gh pr comment "${PR_NUMBER}" --body "$DIFF"

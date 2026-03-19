@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,6 +31,44 @@ type Check struct {
 }
 
 func main() {
+	// CLI subcommand dispatch: "audit --dry-run" and "audit diff".
+	if len(os.Args) > 1 && os.Args[1] == "audit" {
+		auditArgs := os.Args[2:]
+		if len(auditArgs) > 0 && auditArgs[0] == "diff" {
+			// audit diff --baseline <file> --candidate <file> [--fetched-at <ts>] [--branch <name>]
+			fs := flag.NewFlagSet("audit diff", flag.ExitOnError)
+			baseline := fs.String("baseline", "", "path to baseline JSON file (required)")
+			candidate := fs.String("candidate", "", "path to candidate JSON file (required)")
+			fetchedAt := fs.String("fetched-at", "", "timestamp when baseline was fetched (optional)")
+			branch := fs.String("branch", "", "name of PR branch (optional)")
+			if err := fs.Parse(auditArgs[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			if *baseline == "" || *candidate == "" {
+				fmt.Fprintf(os.Stderr, "error: --baseline and --candidate are required\n")
+				fs.Usage()
+				os.Exit(1)
+			}
+			runAuditDiff(*baseline, *candidate, *fetchedAt, *branch)
+			return
+		}
+
+		// audit [--dry-run]
+		fs := flag.NewFlagSet("audit", flag.ExitOnError)
+		dryRun := fs.Bool("dry-run", false, "run without creating issues; output findings as JSON")
+		if err := fs.Parse(auditArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if *dryRun {
+			runAuditDryRun()
+			return
+		}
+		fmt.Fprintf(os.Stderr, "usage: lucos_repos audit --dry-run\n       lucos_repos audit diff --baseline <file> --candidate <file>\n")
+		os.Exit(1)
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		slog.Error("Environment variable `PORT` not set")
