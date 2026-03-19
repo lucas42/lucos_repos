@@ -128,6 +128,80 @@ func TestCircleCIJobsInRequiredChecks_NoCIConfig(t *testing.T) {
 	}
 }
 
+// TestCircleCIJobsInRequiredChecks_LegacyOrbNamespaceDropped verifies that
+// "ci/circleci: build-amd64" (legacy format without orb namespace) is accepted
+// as matching the CI config job "lucos/build-amd64".
+func TestCircleCIJobsInRequiredChecks_LegacyOrbNamespaceDropped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
+			w.Write([]byte(encodedWorkflowConfig()))
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			// Legacy format: orb namespace dropped, bare job segment only.
+			w.Write([]byte(encodedProtectionWithChecks([]string{"ci/circleci: test", "ci/circleci: build-amd64"})))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "circleci-jobs-in-required-checks").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true for legacy bare segment format, got Detail=%q", result.Detail)
+	}
+}
+
+// TestCircleCIJobsInRequiredChecks_DuplicateChecksNoDuplicateDetail verifies that
+// when both the legacy contexts and modern checks arrays are populated with the
+// same entries, the detail string does not list duplicates.
+func TestCircleCIJobsInRequiredChecks_DuplicateChecksNoDuplicateDetail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
+			w.Write([]byte(encodedWorkflowConfig()))
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			// Both contexts and checks arrays populated — simulates the duplicate bug.
+			w.Write([]byte(`{"required_status_checks":{"contexts":["ci/circleci: test"],"checks":[{"context":"ci/circleci: test"}]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	// "build" is still missing — but "test" should only appear once in detail.
+	result := findConvention(t, "circleci-jobs-in-required-checks").Check(repo)
+	if result.Err != nil {
+		t.Fatalf("unexpected Err: %v", result.Err)
+	}
+	// Count occurrences of "ci/circleci: test" in the detail string.
+	count := 0
+	for i := 0; i < len(result.Detail); i++ {
+		if i+len("ci/circleci: test") <= len(result.Detail) &&
+			result.Detail[i:i+len("ci/circleci: test")] == "ci/circleci: test" {
+			count++
+		}
+	}
+	if count > 1 {
+		t.Errorf("expected 'ci/circleci: test' to appear once in detail, appeared %d times: %q", count, result.Detail)
+	}
+}
+
 // TestCircleCIJobsInRequiredChecks_APIError verifies that an API error on the
 // CI config fetch sets Err.
 func TestCircleCIJobsInRequiredChecks_APIError(t *testing.T) {
