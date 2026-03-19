@@ -268,21 +268,6 @@ type fixedTimeSweeper struct {
 
 func (s *fixedTimeSweeper) Status() (time.Time, error) { return s.completedAt, nil }
 
-// max/min helpers for test body slicing.
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // TestDashboardHandler_WithFindings verifies the handler shows repos, conventions, and repo type.
 func TestDashboardHandler_WithFindings(t *testing.T) {
 	db := openTestDB(t)
