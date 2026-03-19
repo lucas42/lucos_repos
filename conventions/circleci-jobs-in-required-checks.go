@@ -78,19 +78,35 @@ func init() {
 				}
 			}
 
-			// GitHub prefixes CircleCI check names with "ci/circleci: " (e.g.
-			// "ci/circleci: test"). Strip that prefix so the lookup matches the
-			// bare job names extracted from .circleci/config.yml.
+			// GitHub prefixes CircleCI check names with "ci/circleci: " in the
+			// legacy format (e.g. "ci/circleci: test", "ci/circleci: build-amd64").
+			// Newer repos use bare names (e.g. "test", "lucos/build-amd64").
+			// Strip the prefix and deduplicate before building the lookup set.
 			const circlePrefix = "ci/circleci: "
-			requiredSet := make(map[string]bool, len(checks))
+			seen := make(map[string]bool, len(checks))
+			var uniqueChecks []string
 			for _, c := range checks {
+				if !seen[c] {
+					seen[c] = true
+					uniqueChecks = append(uniqueChecks, c)
+				}
+			}
+			requiredSet := make(map[string]bool, len(uniqueChecks))
+			for _, c := range uniqueChecks {
 				requiredSet[strings.TrimPrefix(c, circlePrefix)] = true
 			}
 
 			// Step 3: verify every test/build job is in required status checks.
+			// A CI job "lucos/build-amd64" matches either the full name
+			// "lucos/build-amd64" or the bare segment "build-amd64" in the
+			// required set — the legacy GitHub format drops the orb namespace.
 			var missing []string
 			for _, job := range ciJobs {
-				if !requiredSet[job] {
+				bareSegment := job
+				if i := strings.LastIndex(job, "/"); i >= 0 {
+					bareSegment = job[i+1:]
+				}
+				if !requiredSet[job] && !requiredSet[bareSegment] {
 					missing = append(missing, job)
 				}
 			}
@@ -106,7 +122,7 @@ func init() {
 			return ConventionResult{
 				Convention: "circleci-jobs-in-required-checks",
 				Pass:       false,
-				Detail:     fmt.Sprintf("CircleCI test/build jobs not in required status checks: %v (required checks: %v)", missing, checks),
+				Detail:     fmt.Sprintf("CircleCI test/build jobs not in required status checks: %v (required checks: %v)", missing, uniqueChecks),
 			}
 		},
 	})
