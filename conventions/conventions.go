@@ -398,57 +398,6 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 	}
 }
 
-// gitHubSecretsResponse is the subset of the GitHub Actions secrets list API
-// response that we care about.
-type gitHubSecretsResponse struct {
-	Secrets []struct {
-		Name string `json:"name"`
-	} `json:"secrets"`
-}
-
-// GitHubActionsSecrets returns the names of all Actions secrets set on a
-// repository. It returns an empty slice if no secrets are configured.
-func GitHubActionsSecrets(token, repo string) ([]string, error) {
-	return GitHubActionsSecretsFromBase(GitHubBaseURL, token, repo)
-}
-
-// GitHubActionsSecretsFromBase is the implementation of GitHubActionsSecrets
-// with an injectable base URL, used by tests to point at a fake server.
-func GitHubActionsSecretsFromBase(baseURL, token, repo string) ([]string, error) {
-	url := fmt.Sprintf("%s/repos/%s/actions/secrets", baseURL, repo)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GitHub API request failed: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		var secrets gitHubSecretsResponse
-		if err := json.NewDecoder(resp.Body).Decode(&secrets); err != nil {
-			return nil, fmt.Errorf("failed to decode secrets response: %w", err)
-		}
-		names := make([]string, 0, len(secrets.Secrets))
-		for _, s := range secrets.Secrets {
-			names = append(names, s.Name)
-		}
-		return names, nil
-	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching secrets for %s", resp.StatusCode, repo)
-	}
-}
-
 // gitHubDirEntry is a single file or directory entry from the GitHub Contents
 // API when called on a directory path.
 type gitHubDirEntry struct {
