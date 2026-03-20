@@ -7,12 +7,12 @@ import (
 )
 
 // TestBranchProtectionEnabled_Protected verifies that a repo with branch
-// protection enabled passes the convention.
+// protection enabled (and no required approvals) passes the convention.
 func TestBranchProtectionEnabled_Protected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/repos/lucas42/test_repo/branches/main/protection" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"required_status_checks":null}`))
+			w.Write([]byte(`{"required_status_checks":null,"required_pull_request_reviews":null}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -29,6 +29,35 @@ func TestBranchProtectionEnabled_Protected(t *testing.T) {
 	result := findConvention(t, "branch-protection-enabled").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected Pass=true, got Detail=%q", result.Detail)
+	}
+}
+
+// TestBranchProtectionEnabled_RequiredApprovalsEnabled verifies that a repo
+// with "Require approvals" turned on fails the convention.
+func TestBranchProtectionEnabled_RequiredApprovalsEnabled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/test_repo/branches/main/protection" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"required_status_checks":null,"required_pull_request_reviews":{"required_approving_review_count":1}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "branch-protection-enabled").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for required approvals, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
 	}
 }
 

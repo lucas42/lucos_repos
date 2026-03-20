@@ -259,6 +259,50 @@ type branchProtectionResponse struct {
 			Context string `json:"context"`
 		} `json:"checks"`
 	} `json:"required_status_checks"`
+	// RequiredPullRequestReviews is non-nil when "Require approvals" is enabled.
+	// A nil value means the setting is disabled.
+	RequiredPullRequestReviews *struct{} `json:"required_pull_request_reviews"`
+}
+
+// GitHubBranchProtectionDetails fetches and parses the branch protection rules
+// for the given branch. It returns (nil, nil) when the branch is unprotected.
+func GitHubBranchProtectionDetails(token, repo, branch string) (*branchProtectionResponse, error) {
+	return GitHubBranchProtectionDetailsFromBase(GitHubBaseURL, token, repo, branch)
+}
+
+// GitHubBranchProtectionDetailsFromBase is the implementation of
+// GitHubBranchProtectionDetails with an injectable base URL.
+func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string) (*branchProtectionResponse, error) {
+	url := fmt.Sprintf("%s/repos/%s/branches/%s/protection", baseURL, repo, branch)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var protection branchProtectionResponse
+		if err := json.NewDecoder(resp.Body).Decode(&protection); err != nil {
+			return nil, fmt.Errorf("failed to decode branch protection response: %w", err)
+		}
+		return &protection, nil
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
+	}
 }
 
 // GitHubBranchProtectionEnabled returns true if the given branch has protection
