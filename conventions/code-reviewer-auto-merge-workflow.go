@@ -11,29 +11,23 @@ import (
 const codeReviewerAutoMergeReusableWorkflow = "lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml"
 
 func init() {
-	// code-reviewer-auto-merge-workflow: system repos with unsupervisedAgentCode=true
-	// must have a code-reviewer auto-merge workflow that delegates to the shared
-	// reusable workflow in lucas42/.github.
+	// code-reviewer-auto-merge-workflow: all system and component repos must have
+	// a code-reviewer auto-merge workflow that delegates to the shared reusable
+	// workflow in lucas42/.github. The reusable workflow checks unsupervisedAgentCode
+	// at runtime — if false it requires approval from lucas42, if true it requires
+	// approval from lucos-code-reviewer[bot]. This makes the workflow safe to install
+	// everywhere regardless of unsupervisedAgentCode.
 	Register(Convention{
 		ID:          "code-reviewer-auto-merge-workflow",
-		Description: "System repos with unsupervisedAgentCode enabled have a code-reviewer auto-merge workflow referencing the shared reusable workflow",
-		Rationale:   "Repos with autonomous agent code need the code-reviewer auto-merge workflow so that approved PRs from lucos-code-reviewer[bot] are merged automatically. Without it, agent-opened PRs require manual merging, breaking the unsupervised workflow. The shared reusable workflow ensures security controls (login+numeric ID verification) are applied consistently.",
+		Description: "System and component repos have a code-reviewer auto-merge workflow referencing the shared reusable workflow",
+		Rationale:   "The code-reviewer auto-merge workflow ensures approved PRs are merged automatically. The shared reusable workflow checks unsupervisedAgentCode at runtime from configy: repos with it enabled auto-merge on lucos-code-reviewer[bot] approval; others auto-merge on lucas42 approval. Without this workflow, PRs require manual merging. The shared workflow also closes linked issues when a bot-opened PR is merged, which the GITHUB_TOKEN cannot do.",
 		Guidance:    "Add a `.github/workflows/code-reviewer-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Auto-merge on code reviewer approval\n\non:\n  pull_request_review:\n    types:\n      - submitted\n  pull_request:\n    types:\n      - closed\n\njobs:\n  reusable:\n    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@main\n    secrets:\n      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}\n      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}\n```\n\nYou must also set `CODE_REVIEWER_APP_ID` and `CODE_REVIEWER_PRIVATE_KEY` as Actions secrets on this repository. Without these secrets the workflow silently fails to generate a GitHub App token and auto-merge never runs. Ask lucos-site-reliability or lucos-system-administrator to set them.",
-		AppliesTo:   []RepoType{RepoTypeSystem},
+		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself.
 			"lucas42/.github",
 		},
 		Check: func(repo RepoContext) ConventionResult {
-			// This convention only applies to repos with unsupervisedAgentCode=true.
-			if !repo.UnsupervisedAgentCode {
-				return ConventionResult{
-					Convention: "code-reviewer-auto-merge-workflow",
-					Pass:       true,
-					Detail:     "unsupervisedAgentCode is false; convention does not apply",
-				}
-			}
-
 			base := repo.GitHubBaseURL
 			if base == "" {
 				base = GitHubBaseURL

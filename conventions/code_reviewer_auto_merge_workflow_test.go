@@ -38,9 +38,36 @@ jobs:
       - run: gh pr merge --auto --merge "$PR_URL"
 `
 
-// TestCodeReviewerAutoMergeWorkflow_ValidWorkflow verifies that an unsupervised
-// repo with a valid code-reviewer workflow passes.
+// TestCodeReviewerAutoMergeWorkflow_ValidWorkflow verifies that a repo with a
+// valid code-reviewer workflow passes.
 func TestCodeReviewerAutoMergeWorkflow_ValidWorkflow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(validCodeReviewerAutoMergeYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true, got Detail=%q", result.Detail)
+	}
+}
+
+// TestCodeReviewerAutoMergeWorkflow_ValidWorkflow_SupervisedRepo verifies that
+// a supervised repo (unsupervisedAgentCode=false) with a valid workflow also passes.
+// The convention now applies regardless of unsupervisedAgentCode.
+func TestCodeReviewerAutoMergeWorkflow_ValidWorkflow_SupervisedRepo(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
@@ -55,74 +82,20 @@ func TestCodeReviewerAutoMergeWorkflow_ValidWorkflow(t *testing.T) {
 		Name:                  "lucas42/test_repo",
 		GitHubToken:           "fake-token",
 		Type:                  RepoTypeSystem,
-		UnsupervisedAgentCode: true,
+		UnsupervisedAgentCode: false,
 		GitHubBaseURL:         server.URL,
 	}
 
 	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
 	if !result.Pass {
-		t.Errorf("expected Pass=true, got Detail=%q", result.Detail)
+		t.Errorf("expected Pass=true for supervised repo with valid workflow, got Detail=%q", result.Detail)
 	}
 }
 
-// TestCodeReviewerAutoMergeWorkflow_InlineWorkflow verifies that an unsupervised
-// repo with an inline (non-reusable) workflow fails.
-func TestCodeReviewerAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
+// TestCodeReviewerAutoMergeWorkflow_Missing_SupervisedRepo verifies that a
+// supervised repo missing the workflow fails — the convention now applies to all repos.
+func TestCodeReviewerAutoMergeWorkflow_Missing_SupervisedRepo(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(invalidCodeReviewerAutoMergeYAML)))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	repo := RepoContext{
-		Name:                  "lucas42/test_repo",
-		GitHubToken:           "fake-token",
-		Type:                  RepoTypeSystem,
-		UnsupervisedAgentCode: true,
-		GitHubBaseURL:         server.URL,
-	}
-
-	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
-	if result.Pass {
-		t.Errorf("expected Pass=false for inline workflow, got Detail=%q", result.Detail)
-	}
-	if result.Err != nil {
-		t.Errorf("expected Err=nil, got %v", result.Err)
-	}
-}
-
-// TestCodeReviewerAutoMergeWorkflow_Missing verifies that an unsupervised repo
-// with no code-reviewer workflow fails.
-func TestCodeReviewerAutoMergeWorkflow_Missing(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	repo := RepoContext{
-		Name:                  "lucas42/test_repo",
-		GitHubToken:           "fake-token",
-		Type:                  RepoTypeSystem,
-		UnsupervisedAgentCode: true,
-		GitHubBaseURL:         server.URL,
-	}
-
-	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
-	if result.Pass {
-		t.Errorf("expected Pass=false for missing workflow, got Detail=%q", result.Detail)
-	}
-}
-
-// TestCodeReviewerAutoMergeWorkflow_SupervisedRepoSkipped verifies that a repo
-// without unsupervisedAgentCode passes without making any API calls.
-func TestCodeReviewerAutoMergeWorkflow_SupervisedRepoSkipped(t *testing.T) {
-	apiCalled := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiCalled = true
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -136,11 +109,79 @@ func TestCodeReviewerAutoMergeWorkflow_SupervisedRepoSkipped(t *testing.T) {
 	}
 
 	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
-	if !result.Pass {
-		t.Errorf("expected Pass=true for supervised repo, got Detail=%q", result.Detail)
+	if result.Pass {
+		t.Errorf("expected Pass=false for supervised repo missing workflow, got Detail=%q", result.Detail)
 	}
-	if apiCalled {
-		t.Error("expected no API calls for supervised repo, but API was called")
+}
+
+// TestCodeReviewerAutoMergeWorkflow_InlineWorkflow verifies that a repo with an
+// inline (non-reusable) workflow fails.
+func TestCodeReviewerAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(invalidCodeReviewerAutoMergeYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for inline workflow, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+}
+
+// TestCodeReviewerAutoMergeWorkflow_Missing verifies that a repo with no
+// code-reviewer workflow fails.
+func TestCodeReviewerAutoMergeWorkflow_Missing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for missing workflow, got Detail=%q", result.Detail)
+	}
+}
+
+// TestCodeReviewerAutoMergeWorkflow_ComponentRepo verifies that the convention
+// also applies to component repos (not just system repos).
+func TestCodeReviewerAutoMergeWorkflow_ComponentRepo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeComponent,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for component repo missing workflow, got Detail=%q", result.Detail)
 	}
 }
 
@@ -152,11 +193,10 @@ func TestCodeReviewerAutoMergeWorkflow_APIError(t *testing.T) {
 	defer server.Close()
 
 	repo := RepoContext{
-		Name:                  "lucas42/test_repo",
-		GitHubToken:           "fake-token",
-		Type:                  RepoTypeSystem,
-		UnsupervisedAgentCode: true,
-		GitHubBaseURL:         server.URL,
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
 	}
 
 	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
