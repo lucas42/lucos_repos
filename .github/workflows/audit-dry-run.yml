@@ -7,6 +7,10 @@ on:
 jobs:
   audit-dry-run:
     runs-on: ubuntu-latest
+    # Dependabot PRs don't have access to repo secrets, so the audit sweep
+    # (which needs AUDIT_APP_ID/AUDIT_APP_PEM) would always fail. The dry-run
+    # output isn't meaningful for dependency bumps anyway, so skip it.
+    if: github.actor != 'dependabot[bot]'
     permissions:
       pull-requests: write
     steps:
