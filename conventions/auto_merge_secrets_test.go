@@ -53,37 +53,8 @@ func TestAutoMergeSecrets_BothSecretsPresent(t *testing.T) {
 	}
 }
 
-// TestAutoMergeSecrets_DependabotWorkflow verifies that a repo with only a
-// dependabot-auto-merge workflow (no code-reviewer one) is still checked.
-func TestAutoMergeSecrets_DependabotWorkflow(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml":
-			w.Write([]byte(`{"type":"file"}`))
-		case "/repos/lucas42/test_repo/actions/secrets":
-			w.Write([]byte(secretsResponse("CODE_REVIEWER_APP_ID", "CODE_REVIEWER_PRIVATE_KEY")))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	repo := RepoContext{
-		Name:          "lucas42/test_repo",
-		GitHubToken:   "fake-token",
-		Type:          RepoTypeSystem,
-		GitHubBaseURL: server.URL,
-	}
-
-	result := findConvention(t, "auto-merge-secrets").Check(repo)
-	if !result.Pass {
-		t.Errorf("expected Pass=true for dependabot workflow with both secrets, got Detail=%q", result.Detail)
-	}
-}
-
-// TestAutoMergeSecrets_MissingBothSecrets verifies that a repo with an auto-merge
-// workflow but neither secret set fails.
+// TestAutoMergeSecrets_MissingBothSecrets verifies that a repo with a
+// code-reviewer-auto-merge workflow but neither secret set fails.
 func TestAutoMergeSecrets_MissingBothSecrets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -178,8 +149,8 @@ func TestAutoMergeSecrets_MissingAppID(t *testing.T) {
 	}
 }
 
-// TestAutoMergeSecrets_NoWorkflow verifies that a repo with no auto-merge
-// workflow passes without checking secrets.
+// TestAutoMergeSecrets_NoWorkflow verifies that a repo with no code-reviewer
+// auto-merge workflow passes without checking secrets.
 func TestAutoMergeSecrets_NoWorkflow(t *testing.T) {
 	secretsAPICalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -206,19 +177,22 @@ func TestAutoMergeSecrets_NoWorkflow(t *testing.T) {
 	}
 }
 
-// TestAutoMergeSecrets_LegacyWorkflowFilename verifies that the legacy
-// auto-merge.yml filename is also detected.
-func TestAutoMergeSecrets_LegacyWorkflowFilename(t *testing.T) {
+// TestAutoMergeSecrets_DependabotOnlyRepo verifies that a repo with only a
+// dependabot-auto-merge workflow (no code-reviewer one) passes — the dependabot
+// workflow uses GITHUB_TOKEN only and does not require these secrets.
+func TestAutoMergeSecrets_DependabotOnlyRepo(t *testing.T) {
+	secretsAPICalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/repos/lucas42/test_repo/contents/.github/workflows/auto-merge.yml":
-			w.Write([]byte(`{"type":"file"}`))
-		case "/repos/lucas42/test_repo/actions/secrets":
-			w.Write([]byte(secretsResponse()))
-		default:
-			w.WriteHeader(http.StatusNotFound)
+		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
+			secretsAPICalled = true
 		}
+		// dependabot-auto-merge.yml exists but code-reviewer-auto-merge.yml does not
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
+			w.Write([]byte(`{"type":"file"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
@@ -230,8 +204,11 @@ func TestAutoMergeSecrets_LegacyWorkflowFilename(t *testing.T) {
 	}
 
 	result := findConvention(t, "auto-merge-secrets").Check(repo)
-	if result.Pass {
-		t.Errorf("expected Pass=false for legacy auto-merge.yml with missing secrets, got Detail=%q", result.Detail)
+	if !result.Pass {
+		t.Errorf("expected Pass=true for dependabot-only repo, got Detail=%q", result.Detail)
+	}
+	if secretsAPICalled {
+		t.Error("expected secrets API not to be called for dependabot-only repo, but it was")
 	}
 }
 

@@ -6,17 +6,18 @@ import (
 )
 
 func init() {
-	// auto-merge-secrets: any repo with a code-reviewer or Dependabot auto-merge
-	// workflow must also have both CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY
-	// set as Actions secrets.
+	// auto-merge-secrets: any repo with a code-reviewer auto-merge workflow must
+	// also have both CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY set as
+	// Actions secrets. The dependabot auto-merge workflow uses GITHUB_TOKEN only
+	// and does not require these secrets.
 	Register(Convention{
 		ID:          "auto-merge-secrets",
-		Description: "Repos with auto-merge workflow files have both CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY secrets set",
-		Rationale:   "The code-reviewer and Dependabot auto-merge workflows use a GitHub App token to approve and merge PRs. Without CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY set as Actions secrets, the workflow silently fails at startup — auto-merge never runs and there is no obvious error signal. On 2026-03-19, 33 out of 39 repos were found to have the workflow file but not the secrets, causing silent auto-merge failures.",
-		Guidance:    "Set both `CODE_REVIEWER_APP_ID` and `CODE_REVIEWER_PRIVATE_KEY` as Actions secrets on this repository. These credentials belong to the lucos-code-reviewer GitHub App and allow the auto-merge workflow to generate a token and approve/merge PRs. Ask lucos-site-reliability or lucos-system-administrator to set the secrets via the GitHub API or the repository Settings UI.",
+		Description: "Repos with a code-reviewer auto-merge workflow have both CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY secrets set",
+		Rationale:   "The code-reviewer auto-merge workflow uses a GitHub App token to merge PRs and close linked issues. Without CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY set as Actions secrets, the workflow silently fails to generate the token — auto-merge never runs and there is no obvious error signal. On 2026-03-19, 33 out of 39 repos were found to have the workflow file but not the secrets, causing silent auto-merge failures.",
+		Guidance:    "Set both `CODE_REVIEWER_APP_ID` and `CODE_REVIEWER_PRIVATE_KEY` as Actions secrets on this repository. These credentials belong to the lucos-code-reviewer GitHub App and allow the auto-merge workflow to generate a token to merge PRs and close linked issues. Ask lucos-site-reliability or lucos-system-administrator to set the secrets via the GitHub API or the repository Settings UI.",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
 		ExcludeRepos: []string{
-			// The .github repo defines the reusable workflows themselves, not callers.
+			// The .github repo defines the reusable workflow itself, not a caller.
 			"lucas42/.github",
 		},
 		Check: func(repo RepoContext) ConventionResult {
@@ -25,39 +26,27 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			// Check whether either auto-merge workflow file exists.
-			workflowFiles := []string{
-				".github/workflows/code-reviewer-auto-merge.yml",
-				".github/workflows/dependabot-auto-merge.yml",
-				".github/workflows/auto-merge.yml",
-			}
-
-			hasWorkflow := false
-			for _, path := range workflowFiles {
-				exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, path)
-				if err != nil {
-					slog.Warn("Convention check failed", "convention", "auto-merge-secrets", "repo", repo.Name, "step", "check-workflow-file", "file", path, "error", err)
-					return ConventionResult{
-						Convention: "auto-merge-secrets",
-						Err:        fmt.Errorf("error checking %s: %w", path, err),
-					}
-				}
-				if exists {
-					hasWorkflow = true
-					break
+			// Only the code-reviewer auto-merge workflow requires these secrets.
+			// The dependabot auto-merge workflow uses GITHUB_TOKEN only.
+			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/code-reviewer-auto-merge.yml")
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "auto-merge-secrets", "repo", repo.Name, "step", "check-workflow-file", "error", err)
+				return ConventionResult{
+					Convention: "auto-merge-secrets",
+					Err:        fmt.Errorf("error checking code-reviewer-auto-merge.yml: %w", err),
 				}
 			}
 
-			if !hasWorkflow {
-				// No auto-merge workflow — convention does not apply.
+			if !exists {
+				// No code-reviewer auto-merge workflow — convention does not apply.
 				return ConventionResult{
 					Convention: "auto-merge-secrets",
 					Pass:       true,
-					Detail:     "no auto-merge workflow file found; convention does not apply",
+					Detail:     ".github/workflows/code-reviewer-auto-merge.yml not found; convention does not apply",
 				}
 			}
 
-			// Auto-merge workflow exists — verify both secrets are present.
+			// Workflow exists — verify both secrets are present.
 			secretNames, err := GitHubActionsSecretsFromBase(base, repo.GitHubToken, repo.Name)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "auto-merge-secrets", "repo", repo.Name, "step", "fetch-secrets", "error", err)
@@ -94,7 +83,7 @@ func init() {
 			return ConventionResult{
 				Convention: "auto-merge-secrets",
 				Pass:       false,
-				Detail:     fmt.Sprintf("auto-merge workflow file found but missing Actions secret(s): %v", missing),
+				Detail:     fmt.Sprintf("code-reviewer-auto-merge.yml found but missing Actions secret(s): %v", missing),
 			}
 		},
 	})
