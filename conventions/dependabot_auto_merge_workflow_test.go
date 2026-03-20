@@ -14,11 +14,38 @@ func encodeWorkflowContent(content string) string {
 
 const validDependabotAutoMergeYAML = `name: Dependabot auto-merge
 
-on: pull_request
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: write
 
 jobs:
   dependabot:
-    if: github.actor == 'dependabot[bot]'
+    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+`
+
+const oldPullRequestTargetYAML = `name: Dependabot auto-merge
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dependabot:
+    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    secrets: inherit
+`
+
+const missingPermissionsYAML = `name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dependabot:
     uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
 `
 
@@ -82,6 +109,64 @@ func TestDependabotAutoMergeWorkflow_ValidWorkflow_LegacyFilename(t *testing.T) 
 	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected Pass=true for legacy filename, got Detail=%q", result.Detail)
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_PullRequestTarget verifies that a workflow using
+// pull_request_target fails — this trigger causes startup_failure with reusable workflows.
+func TestDependabotAutoMergeWorkflow_PullRequestTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(oldPullRequestTargetYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for pull_request_target workflow, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_MissingPermissions verifies that a workflow using
+// pull_request but without a top-level permissions block fails.
+func TestDependabotAutoMergeWorkflow_MissingPermissions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(missingPermissionsYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for missing permissions block, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
 	}
 }
 
