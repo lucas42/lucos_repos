@@ -1,39 +1,60 @@
 package conventions
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 )
 
-// gitHubRepoSettingsResponse is the subset of the GitHub repository API
-// response that we care about for this convention.
-type gitHubRepoSettingsResponse struct {
-	AllowAutoMerge bool `json:"allow_auto_merge"`
+// graphQLRepoAutoMergeResponse holds the GraphQL response for the
+// autoMergeAllowed field on a repository.
+type graphQLRepoAutoMergeResponse struct {
+	Data struct {
+		Repository *struct {
+			AutoMergeAllowed bool `json:"autoMergeAllowed"`
+		} `json:"repository"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
 }
 
-// GitHubRepoSettings fetches the repository-level settings for the given repo.
-func GitHubRepoSettings(token, repo string) (*gitHubRepoSettingsResponse, error) {
-	return GitHubRepoSettingsFromBase(GitHubBaseURL, token, repo)
+// GitHubAutoMergeAllowed returns whether the given repo has auto-merge enabled,
+// using the GraphQL API. The REST API's allow_auto_merge field is only returned
+// to callers with administration access; GraphQL's autoMergeAllowed is available
+// to any app with metadata read access.
+func GitHubAutoMergeAllowed(token, repo string) (bool, error) {
+	return GitHubAutoMergeAllowedFromBase(GitHubBaseURL, token, repo)
 }
 
-// GitHubRepoSettingsFromBase is the implementation of GitHubRepoSettings with
-// an injectable base URL, used by tests to point at a fake server.
-func GitHubRepoSettingsFromBase(baseURL, token, repo string) (*gitHubRepoSettingsResponse, error) {
-	url := fmt.Sprintf("%s/repos/%s", baseURL, repo)
-	req, err := http.NewRequest("GET", url, nil)
+// GitHubAutoMergeAllowedFromBase is the implementation of GitHubAutoMergeAllowed
+// with an injectable base URL, used by tests to point at a fake server.
+func GitHubAutoMergeAllowedFromBase(baseURL, token, repo string) (bool, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid repo name %q: expected owner/repo format", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	query := fmt.Sprintf(`{ "query": "{ repository(owner: \"%s\", name: \"%s\") { autoMergeAllowed } }" }`, owner, name)
+
+	url := fmt.Sprintf("%s/graphql", baseURL)
+	req, err := http.NewRequest("POST", url, bytes.NewBufferString(query))
 	if err != nil {
-		return nil, fmt.Errorf("failed to build request: %w", err)
+		return false, fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+		return false, fmt.Errorf("GitHub GraphQL request failed: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -41,14 +62,23 @@ func GitHubRepoSettingsFromBase(baseURL, token, repo string) (*gitHubRepoSetting
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching repo settings for %s", resp.StatusCode, repo)
+		return false, fmt.Errorf("unexpected GitHub GraphQL status %d for %s", resp.StatusCode, repo)
 	}
 
-	var settings gitHubRepoSettingsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&settings); err != nil {
-		return nil, fmt.Errorf("failed to decode repo settings response for %s: %w", repo, err)
+	var result graphQLRepoAutoMergeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("failed to decode GraphQL response for %s: %w", repo, err)
 	}
-	return &settings, nil
+
+	if len(result.Errors) > 0 {
+		return false, fmt.Errorf("GraphQL error for %s: %s", repo, result.Errors[0].Message)
+	}
+
+	if result.Data.Repository == nil {
+		return false, fmt.Errorf("repository %s not found in GraphQL response", repo)
+	}
+
+	return result.Data.Repository.AutoMergeAllowed, nil
 }
 
 func init() {
@@ -66,16 +96,16 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			settings, err := GitHubRepoSettingsFromBase(base, repo.GitHubToken, repo.Name)
+			allowed, err := GitHubAutoMergeAllowedFromBase(base, repo.GitHubToken, repo.Name)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "allow-auto-merge", "repo", repo.Name, "error", err)
 				return ConventionResult{
 					Convention: "allow-auto-merge",
-					Err:        fmt.Errorf("error fetching repo settings: %w", err),
+					Err:        fmt.Errorf("error checking auto-merge setting: %w", err),
 				}
 			}
 
-			if !settings.AllowAutoMerge {
+			if !allowed {
 				return ConventionResult{
 					Convention: "allow-auto-merge",
 					Pass:       false,

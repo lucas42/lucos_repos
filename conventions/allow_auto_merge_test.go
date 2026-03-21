@@ -9,9 +9,9 @@ import (
 // TestAllowAutoMerge_Enabled verifies that a repo with auto-merge enabled passes.
 func TestAllowAutoMerge_Enabled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/test_repo" {
+		if r.URL.Path == "/graphql" && r.Method == "POST" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"allow_auto_merge":true}`))
+			w.Write([]byte(`{"data":{"repository":{"autoMergeAllowed":true}}}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -37,9 +37,9 @@ func TestAllowAutoMerge_Enabled(t *testing.T) {
 // TestAllowAutoMerge_Disabled verifies that a repo with auto-merge disabled fails.
 func TestAllowAutoMerge_Disabled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/test_repo" {
+		if r.URL.Path == "/graphql" && r.Method == "POST" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"allow_auto_merge":false}`))
+			w.Write([]byte(`{"data":{"repository":{"autoMergeAllowed":false}}}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
