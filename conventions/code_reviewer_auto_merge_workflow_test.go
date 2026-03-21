@@ -16,6 +16,27 @@ on:
     types:
       - closed
 
+permissions:
+  contents: read
+
+jobs:
+  reusable:
+    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@main
+    secrets:
+      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
+      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+`
+
+const missingPermissionsCodeReviewerAutoMergeYAML = `name: Auto-merge on code reviewer approval
+
+on:
+  pull_request_review:
+    types:
+      - submitted
+  pull_request:
+    types:
+      - closed
+
 jobs:
   reusable:
     uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@main
@@ -137,6 +158,35 @@ func TestCodeReviewerAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
 	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
 	if result.Pass {
 		t.Errorf("expected Pass=false for inline workflow, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+}
+
+// TestCodeReviewerAutoMergeWorkflow_MissingPermissions verifies that a workflow
+// referencing the reusable workflow but missing the permissions block fails.
+func TestCodeReviewerAutoMergeWorkflow_MissingPermissions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(missingPermissionsCodeReviewerAutoMergeYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "code-reviewer-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for workflow missing permissions block, got Detail=%q", result.Detail)
 	}
 	if result.Err != nil {
 		t.Errorf("expected Err=nil, got %v", result.Err)
