@@ -16,7 +16,8 @@ on:
     types:
       - closed
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   reusable:
@@ -164,7 +165,7 @@ func TestCodeReviewerAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
 }
 
 // TestCodeReviewerAutoMergeWorkflow_MissingPermissions verifies that a workflow
-// referencing the reusable workflow but missing `permissions: {}` fails.
+// referencing the reusable workflow but missing the permissions block fails.
 func TestCodeReviewerAutoMergeWorkflow_MissingPermissions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
