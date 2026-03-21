@@ -477,6 +477,9 @@ func TestSweep_StoresFindings(t *testing.T) {
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_photos"},
 			})
+		case "/repos/lucas42/lucos_photos":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"allow_auto_merge":true}`))
 		case "/repos/lucas42/lucos_photos/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(encodedCIConfig()))
@@ -554,6 +557,9 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_missing"},
 			})
+		case r.URL.Path == "/repos/lucas42/lucos_missing":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"allow_auto_merge":true}`))
 		case r.URL.Path == "/repos/lucas42/lucos_missing/contents/.circleci/config.yml":
 			// File does not exist — conventions fail.
 			w.WriteHeader(http.StatusNotFound)
@@ -849,6 +855,9 @@ func TestSweep_FullSuccessReturnsNil(t *testing.T) {
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_clean"},
 			})
+		case "/repos/lucas42/lucos_clean":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"allow_auto_merge":true}`))
 		case "/repos/lucas42/lucos_clean/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(encodedCIConfig()))
@@ -994,6 +1003,9 @@ func TestSweep_DeletesStaleFindings(t *testing.T) {
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/lucos_active"},
 			})
+		case r.URL.Path == "/repos/lucas42/lucos_active":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"allow_auto_merge":true}`))
 		case r.URL.Path == "/repos/lucas42/lucos_active/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(encodedCIConfig()))
@@ -1214,6 +1226,9 @@ func TestSweep_IssuesDisabledTreatedAsSoftFailure(t *testing.T) {
 			json.NewEncoder(w).Encode([]gitHubRepo{
 				{FullName: "lucas42/no_issues_repo", Archived: false},
 			})
+		case r.URL.Path == "/repos/lucas42/no_issues_repo":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"allow_auto_merge":true}`))
 		case r.URL.Path == "/repos/lucas42/no_issues_repo/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"message":"Not Found"}`))
