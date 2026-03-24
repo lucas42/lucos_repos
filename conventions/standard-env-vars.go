@@ -1,12 +1,13 @@
 package conventions
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,26 @@ import (
 // expand once the false-positive rate is understood.
 var standardEnvVars = []string{
 	"LOGANNE_ENDPOINT",
+}
+
+// sourceExtensions is the set of file extensions considered "source code" for
+// the purpose of env var detection. We only search these to avoid false
+// positives from docs, images, lock files, etc.
+var sourceExtensions = map[string]bool{
+	".js":   true,
+	".ts":   true,
+	".mjs":  true,
+	".cjs":  true,
+	".py":   true,
+	".go":   true,
+	".rb":   true,
+	".erl":  true,
+	".ex":   true,
+	".exs":  true,
+	".java": true,
+	".kt":   true,
+	".rs":   true,
+	".sh":   true,
 }
 
 // envVarsComposeFile is the structure we need for parsing the environment
@@ -58,18 +79,38 @@ func declaredEnvVars(compose envVarsComposeFile) map[string]bool {
 	return vars
 }
 
-// codeSearchResponse is the subset of the GitHub code search API response we need.
-type codeSearchResponse struct {
-	TotalCount int `json:"total_count"`
+// gitTreeEntry is a single entry from the GitHub git trees API.
+type gitTreeEntry struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // "blob" or "tree"
+	SHA  string `json:"sha"`
+	Size int    `json:"size"`
 }
 
-// GitHubCodeSearchCount checks how many code results exist for a query in a repo.
-// It returns the total_count from the search API.
-func GitHubCodeSearchCount(baseURL, token, repo, query string) (int, error) {
-	searchURL := fmt.Sprintf("%s/search/code?q=%s", baseURL, url.QueryEscape(query+" repo:"+repo))
-	req, err := http.NewRequest("GET", searchURL, nil)
+// gitTreeResponse is the response from the GitHub git trees API.
+type gitTreeResponse struct {
+	Tree      []gitTreeEntry `json:"tree"`
+	Truncated bool           `json:"truncated"`
+}
+
+// gitBlobResponse is the response from the GitHub git blobs API.
+type gitBlobResponse struct {
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+	Size     int    `json:"size"`
+}
+
+// GitHubRepoTree fetches the full recursive tree for a repo's default branch.
+func GitHubRepoTree(baseURL, token, repo string) (*gitTreeResponse, error) {
+	return GitHubRepoTreeFromBase(baseURL, token, repo)
+}
+
+// GitHubRepoTreeFromBase fetches the recursive tree using HEAD.
+func GitHubRepoTreeFromBase(baseURL, token, repo string) (*gitTreeResponse, error) {
+	url := fmt.Sprintf("%s/repos/%s/git/trees/HEAD?recursive=1", baseURL, repo)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return 0, fmt.Errorf("failed to build search request: %w", err)
+		return nil, fmt.Errorf("failed to build tree request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -77,7 +118,7 @@ func GitHubCodeSearchCount(baseURL, token, repo, query string) (int, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("GitHub search API request failed: %w", err)
+		return nil, fmt.Errorf("GitHub tree API request failed: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -85,14 +126,91 @@ func GitHubCodeSearchCount(baseURL, token, repo, query string) (int, error) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("unexpected GitHub search API status %d for query %q in %s", resp.StatusCode, query, repo)
+		return nil, fmt.Errorf("unexpected GitHub tree API status %d for %s", resp.StatusCode, repo)
 	}
 
-	var result codeSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("failed to decode search response: %w", err)
+	var tree gitTreeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tree); err != nil {
+		return nil, fmt.Errorf("failed to decode tree response: %w", err)
 	}
-	return result.TotalCount, nil
+	return &tree, nil
+}
+
+// GitHubBlobContent fetches the content of a git blob.
+func GitHubBlobContent(baseURL, token, repo, sha string) ([]byte, error) {
+	url := fmt.Sprintf("%s/repos/%s/git/blobs/%s", baseURL, repo, sha)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build blob request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub blob API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected GitHub blob API status %d for blob %s in %s", resp.StatusCode, sha, repo)
+	}
+
+	var blob gitBlobResponse
+	if err := json.NewDecoder(resp.Body).Decode(&blob); err != nil {
+		return nil, fmt.Errorf("failed to decode blob response: %w", err)
+	}
+
+	if blob.Encoding != "base64" {
+		return nil, fmt.Errorf("unexpected blob encoding %q for %s in %s", blob.Encoding, sha, repo)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(blob.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("failed to base64-decode blob %s in %s: %w", sha, repo, err)
+	}
+	return decoded, nil
+}
+
+// repoContainsEnvVar checks whether any source file in the repo references
+// the given env var name by fetching the repo tree and checking source files.
+// It uses the git trees and blobs APIs which only require contents:read permission.
+func repoContainsEnvVar(baseURL, token, repo, envVar string) (bool, error) {
+	tree, err := GitHubRepoTreeFromBase(baseURL, token, repo)
+	if err != nil {
+		return false, fmt.Errorf("error fetching repo tree: %w", err)
+	}
+
+	// Find source files to check.
+	var sourceBlobs []gitTreeEntry
+	for _, entry := range tree.Tree {
+		if entry.Type != "blob" {
+			continue
+		}
+		ext := filepath.Ext(entry.Path)
+		if sourceExtensions[ext] && entry.Size < 500000 { // Skip very large files
+			sourceBlobs = append(sourceBlobs, entry)
+		}
+	}
+
+	// Check each source file for the env var reference.
+	for _, blob := range sourceBlobs {
+		content, err := GitHubBlobContent(baseURL, token, repo, blob.SHA)
+		if err != nil {
+			// Log and skip individual blob fetch failures rather than failing the whole check.
+			slog.Warn("Failed to fetch blob", "repo", repo, "path", blob.Path, "error", err)
+			continue
+		}
+		if strings.Contains(string(content), envVar) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func init() {
@@ -153,8 +271,8 @@ func init() {
 					continue // Already declared — no problem.
 				}
 
-				// Search for usage in code.
-				count, err := GitHubCodeSearchCount(base, repo.GitHubToken, repo.Name, envVar)
+				// Search source files for the env var reference.
+				found, err := repoContainsEnvVar(base, repo.GitHubToken, repo.Name, envVar)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "standard-env-vars-in-compose", "repo", repo.Name, "step", "search-code", "envVar", envVar, "error", err)
 					return ConventionResult{
@@ -163,7 +281,7 @@ func init() {
 					}
 				}
 
-				if count > 0 {
+				if found {
 					missing = append(missing, envVar)
 				}
 			}

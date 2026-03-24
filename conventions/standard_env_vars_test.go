@@ -1,12 +1,80 @@
 package conventions
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+// treeBlobServer creates a test server that serves docker-compose.yml via
+// the contents API and source files via the git trees + blobs APIs.
+// sourceFiles maps file paths to their content. If nil, the tree API returns
+// an empty tree.
+func treeBlobServer(t *testing.T, compose string, sourceFiles map[string]string) *httptest.Server {
+	t.Helper()
+
+	// Build blob map: sha → content
+	blobs := make(map[string]string)
+	var treeEntries []gitTreeEntry
+	for path, content := range sourceFiles {
+		sha := "sha-" + strings.ReplaceAll(path, "/", "-")
+		blobs[sha] = content
+		treeEntries = append(treeEntries, gitTreeEntry{
+			Path: path,
+			Type: "blob",
+			SHA:  sha,
+			Size: len(content),
+		})
+	}
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve docker-compose.yml via contents API
+		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
+			if compose == "" {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"Not Found"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(composeFixture(compose))
+			return
+		}
+
+		// Serve git tree
+		if r.URL.Path == "/repos/lucas42/lucos_test/git/trees/HEAD" {
+			w.Header().Set("Content-Type", "application/json")
+			resp := gitTreeResponse{Tree: treeEntries}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		// Serve git blobs
+		if strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_test/git/blobs/") {
+			sha := strings.TrimPrefix(r.URL.Path, "/repos/lucas42/lucos_test/git/blobs/")
+			content, ok := blobs[sha]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			encoded := base64.StdEncoding.EncodeToString([]byte(content))
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(gitBlobResponse{
+				Content:  encoded,
+				Encoding: "base64",
+				Size:     len(content),
+			})
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
 
 func TestStandardEnvVars_Registered(t *testing.T) {
 	c := findConvention(t, "standard-env-vars-in-compose")
@@ -31,10 +99,7 @@ func TestStandardEnvVars_Registered(t *testing.T) {
 }
 
 func TestStandardEnvVars_NoComposeFile(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message":"Not Found"}`))
-	}))
+	server := treeBlobServer(t, "", nil)
 	defer server.Close()
 
 	repo := RepoContext{
@@ -58,22 +123,9 @@ services:
       - PORT
       - LOGANNE_ENDPOINT
 `
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(composeFixture(compose))
-			return
-		}
-		// Search should not be called when var is already declared,
-		// but return 0 results just in case.
-		if strings.HasPrefix(r.URL.Path, "/search/code") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"total_count": 1})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/main.js": `const endpoint = process.env.LOGANNE_ENDPOINT;`,
+	})
 	defer server.Close()
 
 	repo := RepoContext{
@@ -97,20 +149,7 @@ services:
       PORT: "8080"
       LOGANNE_ENDPOINT: "http://loganne:8080"
 `
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(composeFixture(compose))
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/search/code") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"total_count": 1})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	server := treeBlobServer(t, compose, nil)
 	defer server.Close()
 
 	repo := RepoContext{
@@ -133,20 +172,9 @@ services:
     environment:
       - PORT
 `
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(composeFixture(compose))
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/search/code") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"total_count": 3})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/app.js": `const loganne = process.env.LOGANNE_ENDPOINT || "";`,
+	})
 	defer server.Close()
 
 	repo := RepoContext{
@@ -172,20 +200,9 @@ services:
     environment:
       - PORT
 `
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(composeFixture(compose))
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/search/code") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"total_count": 0})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/main.js": `console.log("Hello world");`,
+	})
 	defer server.Close()
 
 	repo := RepoContext{
@@ -218,7 +235,7 @@ func TestStandardEnvVars_ComposeAPIError(t *testing.T) {
 	}
 }
 
-func TestStandardEnvVars_SearchAPIError(t *testing.T) {
+func TestStandardEnvVars_TreeAPIError(t *testing.T) {
 	compose := `
 services:
   app:
@@ -226,6 +243,7 @@ services:
     environment:
       - PORT
 `
+	// Server serves compose file but returns 500 for tree API
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
 			w.Header().Set("Content-Type", "application/json")
@@ -233,11 +251,7 @@ services:
 			w.Write(composeFixture(compose))
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/search/code") {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
@@ -249,7 +263,7 @@ services:
 
 	result := findConvention(t, "standard-env-vars-in-compose").Check(repo)
 	if result.Err == nil {
-		t.Errorf("expected Err when search API returns 403")
+		t.Errorf("expected Err when tree API fails")
 	}
 }
 
@@ -262,20 +276,7 @@ services:
       - PORT=8080
       - LOGANNE_ENDPOINT=http://loganne:8080
 `
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(composeFixture(compose))
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/search/code") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"total_count": 1})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	server := treeBlobServer(t, compose, nil)
 	defer server.Close()
 
 	repo := RepoContext{
@@ -287,6 +288,33 @@ services:
 	result := findConvention(t, "standard-env-vars-in-compose").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected pass when LOGANNE_ENDPOINT=value is declared, got fail: %s", result.Detail)
+	}
+}
+
+func TestStandardEnvVars_NonSourceFilesIgnored(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	// LOGANNE_ENDPOINT only appears in a .md file (not a source file)
+	server := treeBlobServer(t, compose, map[string]string{
+		"README.md":  `Set LOGANNE_ENDPOINT to configure logging`,
+		"src/app.js": `console.log("Hello");`,
+	})
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "standard-env-vars-in-compose").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when env var only in non-source files, got fail: %s", result.Detail)
 	}
 }
 
