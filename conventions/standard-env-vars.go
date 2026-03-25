@@ -185,10 +185,15 @@ func repoContainsEnvVar(baseURL, token, repo, envVar string) (bool, error) {
 		return false, fmt.Errorf("error fetching repo tree: %w", err)
 	}
 
-	// Find source files to check.
+	// Find source files to check. Exclude the conventions/ directory to avoid
+	// matching the convention definitions themselves (which reference env var
+	// names as string literals).
 	var sourceBlobs []gitTreeEntry
 	for _, entry := range tree.Tree {
 		if entry.Type != "blob" {
+			continue
+		}
+		if strings.HasPrefix(entry.Path, "conventions/") {
 			continue
 		}
 		ext := filepath.Ext(entry.Path)
