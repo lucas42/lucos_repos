@@ -52,6 +52,39 @@ func branchProtectionFixtureWithChecks(checkNames []string) []byte {
 	return b
 }
 
+// autoMergeServerWithLanguages creates a test server that serves the languages
+// endpoint, auto-merge workflow, and branch protection for codeql-required-for-auto-merge tests.
+func autoMergeServerWithLanguages(t *testing.T, languages map[string]int, hasAutoMerge bool, protectionBody []byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(languages)
+		case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
+			if hasAutoMerge {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"type":"file"}`))
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"Not Found"}`))
+			}
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			if protectionBody != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write(protectionBody)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"Branch not protected"}`))
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
 // TestCodeQLRequiredForAutoMerge_Registered verifies the convention is registered
 // with the expected fields.
 func TestCodeQLRequiredForAutoMerge_Registered(t *testing.T) {
@@ -84,42 +117,35 @@ func TestCodeQLRequiredForAutoMerge_Registered(t *testing.T) {
 	if !found.AppliesToType(RepoTypeComponent) {
 		t.Error("codeql-required-for-auto-merge should apply to RepoTypeComponent")
 	}
-	// The convention is not meaningful for unconfigured repos (which wouldn't
-	// have auto-merge workflows in practice), so it is scoped to exclude them.
-	// If that changes, update this assertion.
 	if found.AppliesToType(RepoTypeUnconfigured) {
 		t.Error("codeql-required-for-auto-merge should not apply to RepoTypeUnconfigured")
+	}
+}
+
+// TestCodeQLRequiredForAutoMerge_NoCodeQLLanguages verifies the convention
+// passes when the repo has no CodeQL-supported languages.
+func TestCodeQLRequiredForAutoMerge_NoCodeQLLanguages(t *testing.T) {
+	server := autoMergeServerWithLanguages(t, map[string]int{"Shell": 200, "Dockerfile": 100}, true, nil)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when no CodeQL languages, got fail: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "no CodeQL-supported languages") {
+		t.Errorf("expected detail to mention no CodeQL languages, got: %s", result.Detail)
 	}
 }
 
 // TestCodeQLRequiredForAutoMerge_NoAutoMergeWorkflow verifies the convention
 // passes when the repo has no code-reviewer-auto-merge.yml workflow.
 func TestCodeQLRequiredForAutoMerge_NoAutoMergeWorkflow(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Repo has no workflows at all.
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message":"Not Found"}`))
-	}))
+	server := autoMergeServerWithLanguages(t, map[string]int{"JavaScript": 1000}, false, nil)
 	defer server.Close()
 
-	repo := RepoContext{
-		Name:          "lucas42/test_repo",
-		GitHubToken:   "fake-token",
-		GitHubBaseURL: server.URL,
-	}
-
-	var conv Convention
-	for _, c := range All() {
-		if c.ID == "codeql-required-for-auto-merge" {
-			conv = c
-			break
-		}
-	}
-	if conv.Check == nil {
-		t.Fatal("convention not found")
-	}
-
-	result := conv.Check(repo)
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected pass when no auto-merge workflow present, got fail: %s", result.Detail)
 	}
@@ -131,39 +157,15 @@ func TestCodeQLRequiredForAutoMerge_NoAutoMergeWorkflow(t *testing.T) {
 // TestCodeQLRequiredForAutoMerge_AutoMergeWithCodeQL verifies the convention
 // passes when auto-merge is present and a CodeQL check is in the required checks.
 func TestCodeQLRequiredForAutoMerge_AutoMergeWithCodeQL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"type":"file"}`))
-		case "/repos/lucas42/test_repo/branches/main/protection":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(branchProtectionFixture([]string{"Analyze (python)", "lucos/build-amd64"}))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	server := autoMergeServerWithLanguages(t,
+		map[string]int{"Python": 500},
+		true,
+		branchProtectionFixture([]string{"Analyze (python)", "lucos/build-amd64"}),
+	)
 	defer server.Close()
 
-	repo := RepoContext{
-		Name:          "lucas42/test_repo",
-		GitHubToken:   "fake-token",
-		GitHubBaseURL: server.URL,
-	}
-
-	var conv Convention
-	for _, c := range All() {
-		if c.ID == "codeql-required-for-auto-merge" {
-			conv = c
-			break
-		}
-	}
-	if conv.Check == nil {
-		t.Fatal("convention not found")
-	}
-
-	result := conv.Check(repo)
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected pass when CodeQL check is required, got fail: %s", result.Detail)
 	}
@@ -172,40 +174,15 @@ func TestCodeQLRequiredForAutoMerge_AutoMergeWithCodeQL(t *testing.T) {
 // TestCodeQLRequiredForAutoMerge_AutoMergeWithoutCodeQL verifies the convention
 // fails when auto-merge is present but no CodeQL check is in the required checks.
 func TestCodeQLRequiredForAutoMerge_AutoMergeWithoutCodeQL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"type":"file"}`))
-		case "/repos/lucas42/test_repo/branches/main/protection":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			// Only non-CodeQL checks required.
-			w.Write(branchProtectionFixture([]string{"lucos/build-amd64", "test"}))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	server := autoMergeServerWithLanguages(t,
+		map[string]int{"Go": 300},
+		true,
+		branchProtectionFixture([]string{"lucos/build-amd64", "test"}),
+	)
 	defer server.Close()
 
-	repo := RepoContext{
-		Name:          "lucas42/test_repo",
-		GitHubToken:   "fake-token",
-		GitHubBaseURL: server.URL,
-	}
-
-	var conv Convention
-	for _, c := range All() {
-		if c.ID == "codeql-required-for-auto-merge" {
-			conv = c
-			break
-		}
-	}
-	if conv.Check == nil {
-		t.Fatal("convention not found")
-	}
-
-	result := conv.Check(repo)
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
 	if result.Pass {
 		t.Errorf("expected fail when no CodeQL check is required, got pass: %s", result.Detail)
 	}
@@ -218,39 +195,11 @@ func TestCodeQLRequiredForAutoMerge_AutoMergeWithoutCodeQL(t *testing.T) {
 // convention fails when auto-merge is present but the branch has no protection
 // rules at all.
 func TestCodeQLRequiredForAutoMerge_AutoMergeUnprotectedBranch(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"type":"file"}`))
-		case "/repos/lucas42/test_repo/branches/main/protection":
-			// Branch is unprotected — GitHub returns 404.
-			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"message":"Branch not protected"}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	server := autoMergeServerWithLanguages(t, map[string]int{"TypeScript": 800}, true, nil)
 	defer server.Close()
 
-	repo := RepoContext{
-		Name:          "lucas42/test_repo",
-		GitHubToken:   "fake-token",
-		GitHubBaseURL: server.URL,
-	}
-
-	var conv Convention
-	for _, c := range All() {
-		if c.ID == "codeql-required-for-auto-merge" {
-			conv = c
-			break
-		}
-	}
-	if conv.Check == nil {
-		t.Fatal("convention not found")
-	}
-
-	result := conv.Check(repo)
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
 	if result.Pass {
 		t.Errorf("expected fail when branch is unprotected, got pass: %s", result.Detail)
 	}
@@ -264,39 +213,14 @@ func TestCodeQLRequiredForAutoMerge_AutoMergeUnprotectedBranch(t *testing.T) {
 func TestCodeQLRequiredForAutoMerge_VariousLanguages(t *testing.T) {
 	for _, lang := range []string{"python", "javascript", "go", "java", "ruby"} {
 		checkName := "Analyze (" + lang + ")"
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"type":"file"}`))
-			case "/repos/lucas42/test_repo/branches/main/protection":
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				w.Write(branchProtectionFixture([]string{checkName}))
-			default:
-				w.WriteHeader(http.StatusNotFound)
-			}
-		}))
+		server := autoMergeServerWithLanguages(t,
+			map[string]int{"JavaScript": 1000},
+			true,
+			branchProtectionFixture([]string{checkName}),
+		)
 
-		repo := RepoContext{
-			Name:          "lucas42/test_repo",
-			GitHubToken:   "fake-token",
-			GitHubBaseURL: server.URL,
-		}
-
-		var conv Convention
-		for _, c := range All() {
-			if c.ID == "codeql-required-for-auto-merge" {
-				conv = c
-				break
-			}
-		}
-		if conv.Check == nil {
-			server.Close()
-			t.Fatal("convention not found")
-		}
-
-		result := conv.Check(repo)
+		repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+		result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
 		if !result.Pass {
 			t.Errorf("expected pass for language %q (check %q), got fail: %s", lang, checkName, result.Detail)
 		}

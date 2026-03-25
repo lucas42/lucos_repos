@@ -445,3 +445,72 @@ func GitHubListDirectoryFromBase(baseURL, token, repo, path string) ([]gitHubDir
 		return nil, fmt.Errorf("unexpected GitHub API status %d listing directory %s in %s", resp.StatusCode, path, repo)
 	}
 }
+
+// GitHubRepoLanguages fetches the language breakdown for a repository using
+// the GitHub Languages API. It returns a map of language name to byte count.
+// Returns an empty map (not an error) if the repo has no detected languages.
+func GitHubRepoLanguages(token, repo string) (map[string]int, error) {
+	return GitHubRepoLanguagesFromBase(GitHubBaseURL, token, repo)
+}
+
+// GitHubRepoLanguagesFromBase is the implementation of GitHubRepoLanguages
+// with an injectable base URL, used by tests to point at a fake server.
+func GitHubRepoLanguagesFromBase(baseURL, token, repo string) (map[string]int, error) {
+	url := fmt.Sprintf("%s/repos/%s/languages", baseURL, repo)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var languages map[string]int
+		if err := json.NewDecoder(resp.Body).Decode(&languages); err != nil {
+			return nil, fmt.Errorf("failed to decode languages response for %s: %w", repo, err)
+		}
+		return languages, nil
+	case http.StatusNotFound:
+		return map[string]int{}, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching languages for %s", resp.StatusCode, repo)
+	}
+}
+
+// codeQLSupportedLanguages is the set of languages that CodeQL can analyse.
+// Language names match what the GitHub Languages API returns (title case).
+var codeQLSupportedLanguages = map[string]bool{
+	"JavaScript": true,
+	"TypeScript": true,
+	"Python":     true,
+	"Go":         true,
+	"Java":       true,
+	"C":          true,
+	"C++":        true,
+	"C#":         true,
+	"Ruby":       true,
+	"Kotlin":     true,
+	"Swift":      true,
+}
+
+// HasCodeQLLanguage reports whether any of the given languages (as returned by
+// the GitHub Languages API) are supported by CodeQL.
+func HasCodeQLLanguage(languages map[string]int) bool {
+	for lang := range languages {
+		if codeQLSupportedLanguages[lang] {
+			return true
+		}
+	}
+	return false
+}
