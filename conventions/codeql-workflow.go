@@ -27,6 +27,23 @@ func init() {
 				base = GitHubBaseURL
 			}
 
+			// Precondition: skip repos with no CodeQL-supported languages.
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "has-codeql-workflow", "repo", repo.Name, "step", "fetch-languages", "error", err)
+				return ConventionResult{
+					Convention: "has-codeql-workflow",
+					Err:        fmt.Errorf("error fetching languages: %w", err),
+				}
+			}
+			if !HasCodeQLLanguage(languages) {
+				return ConventionResult{
+					Convention: "has-codeql-workflow",
+					Pass:       true,
+					Detail:     "no CodeQL-supported languages detected; convention does not apply",
+				}
+			}
+
 			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "has-codeql-workflow", "repo", repo.Name, "error", err)
@@ -73,6 +90,23 @@ func init() {
 			base := repo.GitHubBaseURL
 			if base == "" {
 				base = GitHubBaseURL
+			}
+
+			// Precondition: skip repos with no CodeQL-supported languages.
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-languages", "error", err)
+				return ConventionResult{
+					Convention: "codeql-workflow-security-settings",
+					Err:        fmt.Errorf("error fetching languages: %w", err),
+				}
+			}
+			if !HasCodeQLLanguage(languages) {
+				return ConventionResult{
+					Convention: "codeql-workflow-security-settings",
+					Pass:       true,
+					Detail:     "no CodeQL-supported languages detected; convention does not apply",
+				}
 			}
 
 			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath)

@@ -1,6 +1,7 @@
 package conventions
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,12 +34,17 @@ func TestHasCodeQLWorkflow_Registered(t *testing.T) {
 
 func TestHasCodeQLWorkflow_FileExists(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/.github/workflows/codeql-analysis.yml" {
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"JavaScript": 1000})
+		case "/repos/lucas42/lucos_test/contents/.github/workflows/codeql-analysis.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"type":"file"}`))
-			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
@@ -51,8 +57,15 @@ func TestHasCodeQLWorkflow_FileExists(t *testing.T) {
 
 func TestHasCodeQLWorkflow_FileMissing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message":"Not Found"}`))
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"Python": 500})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+		}
 	}))
 	defer server.Close()
 
@@ -63,9 +76,73 @@ func TestHasCodeQLWorkflow_FileMissing(t *testing.T) {
 	}
 }
 
-func TestHasCodeQLWorkflow_APIError(t *testing.T) {
+func TestHasCodeQLWorkflow_NoCodeQLLanguages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"Shell": 200, "Dockerfile": 100})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "has-codeql-workflow").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when no CodeQL languages, got fail: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "no CodeQL-supported languages") {
+		t.Errorf("expected detail to mention no CodeQL languages, got: %s", result.Detail)
+	}
+}
+
+func TestHasCodeQLWorkflow_EmptyLanguages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "has-codeql-workflow").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when repo has no languages, got fail: %s", result.Detail)
+	}
+}
+
+func TestHasCodeQLWorkflow_LanguagesAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "has-codeql-workflow").Check(repo)
+	if result.Err == nil {
+		t.Error("expected Err when languages API returns 500")
+	}
+}
+
+func TestHasCodeQLWorkflow_APIError(t *testing.T) {
+	// Languages API succeeds but file check fails
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"Go": 300})
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 	}))
 	defer server.Close()
 
@@ -97,10 +174,40 @@ func TestCodeQLSecuritySettings_Registered(t *testing.T) {
 	}
 }
 
+func TestCodeQLSecuritySettings_NoCodeQLLanguages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"Erlang": 400})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-workflow-security-settings").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when no CodeQL languages, got fail: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "no CodeQL-supported languages") {
+		t.Errorf("expected detail to mention no CodeQL languages, got: %s", result.Detail)
+	}
+}
+
 func TestCodeQLSecuritySettings_FileNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message":"Not Found"}`))
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"JavaScript": 1000})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+		}
 	}))
 	defer server.Close()
 
@@ -132,7 +239,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"Python": 500})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -161,7 +268,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"JavaScript": 1000})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -193,7 +300,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"Go": 300})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -225,7 +332,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"TypeScript": 800})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -257,7 +364,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"Ruby": 200})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -283,7 +390,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"Java": 600})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -315,7 +422,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 `
-	server := codeqlServer(t, workflow)
+	server := codeqlServerWithLanguages(t, workflow, map[string]int{"Python": 500})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
@@ -327,7 +434,14 @@ jobs:
 
 func TestCodeQLSecuritySettings_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"Go": 300})
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 	}))
 	defer server.Close()
 
@@ -339,15 +453,28 @@ func TestCodeQLSecuritySettings_APIError(t *testing.T) {
 }
 
 // codeqlServer creates a test server that serves a codeql-analysis.yml file.
+// Deprecated: use codeqlServerWithLanguages for new tests.
 func codeqlServer(t *testing.T, workflowContent string) *httptest.Server {
 	t.Helper()
+	return codeqlServerWithLanguages(t, workflowContent, map[string]int{"JavaScript": 1000})
+}
+
+// codeqlServerWithLanguages creates a test server that serves both the languages
+// endpoint and a codeql-analysis.yml file.
+func codeqlServerWithLanguages(t *testing.T, workflowContent string, languages map[string]int) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/lucas42/lucos_test/contents/.github/workflows/codeql-analysis.yml" {
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(languages)
+		case "/repos/lucas42/lucos_test/contents/.github/workflows/codeql-analysis.yml":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			w.Write(composeFixture(workflowContent))
-			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusNotFound)
 	}))
 }

@@ -21,6 +21,23 @@ func init() {
 				base = GitHubBaseURL
 			}
 
+			// Precondition: skip repos with no CodeQL-supported languages.
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "codeql-required-for-auto-merge", "repo", repo.Name, "step", "fetch-languages", "error", err)
+				return ConventionResult{
+					Convention: "codeql-required-for-auto-merge",
+					Err:        fmt.Errorf("error fetching languages: %w", err),
+				}
+			}
+			if !HasCodeQLLanguage(languages) {
+				return ConventionResult{
+					Convention: "codeql-required-for-auto-merge",
+					Pass:       true,
+					Detail:     "no CodeQL-supported languages detected; convention does not apply",
+				}
+			}
+
 			// Step 1: check whether code-reviewer-auto-merge.yml is present.
 			// If it isn't, this convention doesn't apply — pass immediately.
 			hasAutoMerge, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/code-reviewer-auto-merge.yml")
