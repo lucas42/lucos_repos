@@ -122,6 +122,21 @@ func TestCodeQLRequiredForAutoMerge_Registered(t *testing.T) {
 	}
 }
 
+// TestCodeQLRequiredForAutoMerge_LanguagesAPIError verifies the convention
+// returns an error when the languages API fails.
+func TestCodeQLRequiredForAutoMerge_LanguagesAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-required-for-auto-merge").Check(repo)
+	if result.Err == nil {
+		t.Error("expected Err when languages API returns 500")
+	}
+}
+
 // TestCodeQLRequiredForAutoMerge_NoCodeQLLanguages verifies the convention
 // passes when the repo has no CodeQL-supported languages.
 func TestCodeQLRequiredForAutoMerge_NoCodeQLLanguages(t *testing.T) {
