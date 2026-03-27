@@ -17,6 +17,11 @@ func init() {
 		Guidance: "Add a `.circleci/config.yml` following the standard lucos CI template " +
 			"(see the lucos CLAUDE.md for the canonical config).",
 		AppliesTo: []RepoType{RepoTypeSystem, RepoTypeComponent},
+		ExcludeRepos: []string{
+			// The .github repo is the org-level shared workflows repository;
+			// it doesn't build or deploy via CircleCI.
+			"lucas42/.github",
+		},
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
 			if base == "" {

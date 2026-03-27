@@ -189,6 +189,25 @@ func TestCircleCIConfigExists_DoesNotApplyToUnconfigured(t *testing.T) {
 	}
 }
 
+// TestCircleCIConfigExists_ExcludesGitHubRepo verifies the convention does
+// not apply to the lucas42/.github repo, since it is the org-level shared
+// workflows repository and does not build or deploy via CircleCI.
+func TestCircleCIConfigExists_ExcludesGitHubRepo(t *testing.T) {
+	c := findConvention(t, "circleci-config-exists")
+	if c.AppliesToRepo("lucas42/.github") {
+		t.Error("expected circleci-config-exists NOT to apply to lucas42/.github")
+	}
+}
+
+// TestCircleCIConfigExists_AppliesToOtherRepos verifies the convention still
+// applies to regular repos that are not excluded.
+func TestCircleCIConfigExists_AppliesToOtherRepos(t *testing.T) {
+	c := findConvention(t, "circleci-config-exists")
+	if !c.AppliesToRepo("lucas42/lucos_photos") {
+		t.Error("expected circleci-config-exists to apply to lucas42/lucos_photos")
+	}
+}
+
 // --- circleci-uses-lucos-orb ---
 
 // TestCircleCIUsesLucosOrb_PassesWhenOrbPresent verifies the convention passes
