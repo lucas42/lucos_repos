@@ -1,14 +1,63 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"lucos_repos/conventions"
 )
+
+// auditTestJWKSServer creates an httptest server for audit handler tests.
+func auditTestJWKSServer(t *testing.T, kid string, pub *rsa.PublicKey) *httptest.Server {
+	t.Helper()
+	jwks := map[string]any{
+		"keys": []map[string]any{
+			{
+				"kty": "RSA",
+				"kid": kid,
+				"n":   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+				"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+			},
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jwks)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// auditTestToken creates a signed JWT for audit handler tests.
+func auditTestToken(t *testing.T, kid string, key *rsa.PrivateKey, owner string) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss":              githubOIDCIssuer,
+		"exp":              time.Now().Add(time.Hour).Unix(),
+		"repository_owner": owner,
+	})
+	token.Header["kid"] = kid
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+	return signed
+}
+
+func newAuditTestValidator(t *testing.T, jwksURL string) *GitHubOIDCValidator {
+	t.Helper()
+	v := NewGitHubOIDCValidator("lucas42")
+	v.jwksURL = jwksURL
+	return v
+}
 
 func TestSingleRepoStatusHandler_NotFound(t *testing.T) {
 	db := openTestDB(t)
@@ -75,80 +124,94 @@ func TestSingleRepoStatusHandler_BadPath(t *testing.T) {
 	}
 }
 
-func TestAuditHandler_NoClientKeys(t *testing.T) {
+func TestAuditHandler_NoBearerToken(t *testing.T) {
 	db := openTestDB(t)
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
+	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", "")
+	handler := newAuditHandler(db, nil, "", v)
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
-	w := httptest.NewRecorder()
-
-	handler(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503 when CLIENT_KEYS not configured, got %d", w.Code)
-	}
-}
-
-func TestAuditHandler_WrongKey(t *testing.T) {
-	db := openTestDB(t)
-
-	handler := newAuditHandler(db, nil, "", "github:production=correct-key")
-	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
-	req.Header.Set("Authorization", "Key wrong-key")
 	w := httptest.NewRecorder()
 
 	handler(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 for wrong key, got %d", w.Code)
+		t.Errorf("expected 401 when no Bearer token, got %d", w.Code)
 	}
 }
 
-func TestAuditHandler_BearerSchemeRejected(t *testing.T) {
+func TestAuditHandler_InvalidToken(t *testing.T) {
 	db := openTestDB(t)
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
+	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", "github:production=test-key")
+	handler := newAuditHandler(db, nil, "", v)
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
-	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Authorization", "Bearer invalid-token")
 	w := httptest.NewRecorder()
 
 	handler(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 for Bearer scheme (must use Key), got %d", w.Code)
+		t.Errorf("expected 401 for invalid token, got %d", w.Code)
+	}
+}
+
+func TestAuditHandler_WrongOwner(t *testing.T) {
+	db := openTestDB(t)
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
+	v := newAuditTestValidator(t, srv.URL)
+
+	handler := newAuditHandler(db, nil, "", v)
+	tokenStr := auditTestToken(t, "k1", key, "evil-user")
+	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong owner, got %d", w.Code)
+	}
+}
+
+func TestAuditHandler_KeySchemeRejected(t *testing.T) {
+	db := openTestDB(t)
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
+	v := newAuditTestValidator(t, srv.URL)
+
+	handler := newAuditHandler(db, nil, "", v)
+	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
+	req.Header.Set("Authorization", "Key some-key")
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for Key scheme (must use Bearer), got %d", w.Code)
 	}
 }
 
 func TestAuditHandler_UnknownRepo(t *testing.T) {
 	db := openTestDB(t)
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
+	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", "github:production=test-key")
+	handler := newAuditHandler(db, nil, "", v)
+	tokenStr := auditTestToken(t, "k1", key, "lucas42")
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/unknown_repo?ref=my-branch", nil)
-	req.Header.Set("Authorization", "Key test-key")
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
 	w := httptest.NewRecorder()
 
 	handler(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown repo, got %d", w.Code)
-	}
-}
-
-func TestParseClientKeys(t *testing.T) {
-	keys := parseClientKeys("github:production=abc123;lucos_navbar:development=def456")
-	if !keys["abc123"] {
-		t.Error("expected abc123 to be a valid key")
-	}
-	if !keys["def456"] {
-		t.Error("expected def456 to be a valid key")
-	}
-	if keys["github:production=abc123"] {
-		t.Error("full entry should not be a valid key")
-	}
-
-	empty := parseClientKeys("")
-	if len(empty) != 0 {
-		t.Errorf("expected 0 keys from empty string, got %d", len(empty))
 	}
 }
 
