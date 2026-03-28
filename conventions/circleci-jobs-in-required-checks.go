@@ -53,18 +53,33 @@ func init() {
 			}
 
 			var ciJobs []string
-			for _, name := range allJobNames(cfg) {
-				if isTestOrBuildJob(name) {
-					ciJobs = append(ciJobs, name)
+			var skippedJobs []string
+			for _, entry := range allJobEntries(cfg) {
+				if !isTestOrBuildJob(entry.Name) {
+					continue
 				}
+				if !entry.RunsOnBranch("main") {
+					skippedJobs = append(skippedJobs, entry.Name)
+					continue
+				}
+				ciJobs = append(ciJobs, entry.Name)
 			}
 
-			if len(ciJobs) == 0 {
+			if len(ciJobs) == 0 && len(skippedJobs) == 0 {
 				// No test/build jobs in the config — nothing to require.
 				return ConventionResult{
 					Convention: "circleci-jobs-in-required-checks",
 					Pass:       true,
 					Detail:     "No test* or build* CircleCI jobs found; convention does not apply",
+				}
+			}
+
+			if len(ciJobs) == 0 {
+				// All test/build jobs are filtered away from main.
+				return ConventionResult{
+					Convention: "circleci-jobs-in-required-checks",
+					Pass:       true,
+					Detail:     fmt.Sprintf("All test/build jobs have branch filters excluding main (skipped: %v); convention does not apply", skippedJobs),
 				}
 			}
 
@@ -112,10 +127,14 @@ func init() {
 			}
 
 			if len(missing) == 0 {
+				detail := fmt.Sprintf("All CircleCI test/build jobs are required status checks: %v", ciJobs)
+				if len(skippedJobs) > 0 {
+					detail += fmt.Sprintf(" (jobs excluded because they do not run on main: %v)", skippedJobs)
+				}
 				return ConventionResult{
 					Convention: "circleci-jobs-in-required-checks",
 					Pass:       true,
-					Detail:     fmt.Sprintf("All CircleCI test/build jobs are required status checks: %v", ciJobs),
+					Detail:     detail,
 				}
 			}
 

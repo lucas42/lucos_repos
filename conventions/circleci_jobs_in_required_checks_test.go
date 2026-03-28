@@ -242,6 +242,167 @@ func TestCircleCIJobsInRequiredChecks_MissingJobShowsActualFormat(t *testing.T) 
 	}
 }
 
+// encodedWorkflowConfigWithBranchFilter returns a base64-encoded CircleCI config
+// where the build job has a branch filter that ignores main.
+func encodedWorkflowConfigWithBranchFilter() string {
+	yaml := `version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build-test-deploy:
+    jobs:
+      - test
+      - lucos/build-amd64:
+          name: build
+          filters:
+            branches:
+              ignore: main
+      - lucos/deploy-avalon:
+          requires:
+            - test
+`
+	encoded := base64.StdEncoding.EncodeToString([]byte(yaml))
+	return `{"content":"` + encoded + `","encoding":"base64"}`
+}
+
+// encodedWorkflowConfigWithBranchOnlyFilter returns a base64-encoded CircleCI
+// config where the build job only runs on specific branches (not main).
+func encodedWorkflowConfigWithBranchOnlyFilter() string {
+	yaml := `version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build-test-deploy:
+    jobs:
+      - test
+      - lucos/build-amd64:
+          name: build
+          filters:
+            branches:
+              only:
+                - develop
+                - /feature-.*/
+      - lucos/deploy-avalon:
+          requires:
+            - test
+`
+	encoded := base64.StdEncoding.EncodeToString([]byte(yaml))
+	return `{"content":"` + encoded + `","encoding":"base64"}`
+}
+
+// encodedWorkflowConfigAllFilteredFromMain returns a base64-encoded CircleCI
+// config where ALL test/build jobs are filtered away from main.
+func encodedWorkflowConfigAllFilteredFromMain() string {
+	yaml := `version: 2.1
+workflows:
+  build-test-deploy:
+    jobs:
+      - test:
+          filters:
+            branches:
+              ignore: main
+      - build-android:
+          filters:
+            branches:
+              ignore: main
+`
+	encoded := base64.StdEncoding.EncodeToString([]byte(yaml))
+	return `{"content":"` + encoded + `","encoding":"base64"}`
+}
+
+// TestCircleCIJobsInRequiredChecks_BuildFilteredFromMain verifies that a build
+// job with branch filters excluding main is not required as a status check.
+// This is the core fix for the convention conflict.
+func TestCircleCIJobsInRequiredChecks_BuildFilteredFromMain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
+			w.Write([]byte(encodedWorkflowConfigWithBranchFilter()))
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			// Only "test" is required — "build" is filtered from main.
+			w.Write([]byte(encodedProtectionWithChecks([]string{"ci/circleci: test"})))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "circleci-jobs-in-required-checks").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true when build job is filtered from main, got Detail=%q", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "do not run on main") {
+		t.Errorf("expected Detail to mention skipped jobs, got: %s", result.Detail)
+	}
+}
+
+// TestCircleCIJobsInRequiredChecks_BuildOnlyFilterExcludesMain verifies that a
+// build job with an "only" filter that does not include main is skipped.
+func TestCircleCIJobsInRequiredChecks_BuildOnlyFilterExcludesMain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
+			w.Write([]byte(encodedWorkflowConfigWithBranchOnlyFilter()))
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			w.Write([]byte(encodedProtectionWithChecks([]string{"ci/circleci: test"})))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "circleci-jobs-in-required-checks").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true when build job only runs on develop/feature, got Detail=%q", result.Detail)
+	}
+}
+
+// TestCircleCIJobsInRequiredChecks_AllJobsFilteredFromMain verifies a pass when
+// all test/build jobs are filtered away from main.
+func TestCircleCIJobsInRequiredChecks_AllJobsFilteredFromMain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
+			w.Write([]byte(encodedWorkflowConfigAllFilteredFromMain()))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "circleci-jobs-in-required-checks").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true when all jobs filtered from main, got Detail=%q", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "convention does not apply") {
+		t.Errorf("expected Detail to say convention does not apply, got: %s", result.Detail)
+	}
+}
+
 // TestCircleCIJobsInRequiredChecks_APIError verifies that an API error on the
 // CI config fetch sets Err.
 func TestCircleCIJobsInRequiredChecks_APIError(t *testing.T) {
