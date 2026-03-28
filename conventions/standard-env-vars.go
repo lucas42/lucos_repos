@@ -243,7 +243,7 @@ func init() {
 			}
 
 			// Fetch and parse docker-compose.yml
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml")
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "standard-env-vars-in-compose", "repo", repo.Name, "step", "fetch-compose", "error", err)
 				return ConventionResult{

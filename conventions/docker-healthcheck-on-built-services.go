@@ -54,7 +54,7 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml")
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "docker-healthcheck-on-built-services", "repo", repo.Name, "step", "fetch-compose", "error", err)
 				return ConventionResult{
