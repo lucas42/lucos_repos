@@ -877,3 +877,116 @@ workflows:
 	}
 }
 
+// --- branch filter tests ---
+
+// TestRunsOnBranch_NoFilters verifies a job with no filters runs on any branch.
+func TestRunsOnBranch_NoFilters(t *testing.T) {
+	e := ciJobEntry{Name: "test"}
+	if !e.RunsOnBranch("main") {
+		t.Error("expected job with no filters to run on main")
+	}
+	if !e.RunsOnBranch("develop") {
+		t.Error("expected job with no filters to run on develop")
+	}
+}
+
+// TestRunsOnBranch_IgnoreMain verifies a job with ignore:main does not run on main.
+func TestRunsOnBranch_IgnoreMain(t *testing.T) {
+	e := ciJobEntry{
+		Name: "build-android",
+		Filters: &ciJobFilters{
+			Branches: ciBranchFilter{Ignore: []string{"main"}},
+		},
+	}
+	if e.RunsOnBranch("main") {
+		t.Error("expected job with ignore:main NOT to run on main")
+	}
+	if !e.RunsOnBranch("develop") {
+		t.Error("expected job with ignore:main to run on develop")
+	}
+}
+
+// TestRunsOnBranch_OnlyDevelop verifies a job with only:develop runs only on develop.
+func TestRunsOnBranch_OnlyDevelop(t *testing.T) {
+	e := ciJobEntry{
+		Name: "build-android",
+		Filters: &ciJobFilters{
+			Branches: ciBranchFilter{Only: []string{"develop"}},
+		},
+	}
+	if e.RunsOnBranch("main") {
+		t.Error("expected job with only:develop NOT to run on main")
+	}
+	if !e.RunsOnBranch("develop") {
+		t.Error("expected job with only:develop to run on develop")
+	}
+}
+
+// TestRunsOnBranch_OnlyIncludesMain verifies a job with only:[main, develop] runs on main.
+func TestRunsOnBranch_OnlyIncludesMain(t *testing.T) {
+	e := ciJobEntry{
+		Name: "test",
+		Filters: &ciJobFilters{
+			Branches: ciBranchFilter{Only: []string{"main", "develop"}},
+		},
+	}
+	if !e.RunsOnBranch("main") {
+		t.Error("expected job with only:[main,develop] to run on main")
+	}
+}
+
+// TestRunsOnBranch_RegexIgnore verifies regex patterns in ignore filters.
+func TestRunsOnBranch_RegexIgnore(t *testing.T) {
+	e := ciJobEntry{
+		Name: "build",
+		Filters: &ciJobFilters{
+			Branches: ciBranchFilter{Ignore: []string{"/^main$/"}},
+		},
+	}
+	if e.RunsOnBranch("main") {
+		t.Error("expected job with ignore:/^main$/ NOT to run on main")
+	}
+	if !e.RunsOnBranch("main-hotfix") {
+		t.Error("expected job with ignore:/^main$/ to run on main-hotfix")
+	}
+}
+
+// TestRunsOnBranch_RegexOnly verifies regex patterns in only filters.
+func TestRunsOnBranch_RegexOnly(t *testing.T) {
+	e := ciJobEntry{
+		Name: "build",
+		Filters: &ciJobFilters{
+			Branches: ciBranchFilter{Only: []string{"/feature-.*/"}},
+		},
+	}
+	if e.RunsOnBranch("main") {
+		t.Error("expected job with only:/feature-.*/ NOT to run on main")
+	}
+	if !e.RunsOnBranch("feature-login") {
+		t.Error("expected job with only:/feature-.*/ to run on feature-login")
+	}
+}
+
+// TestMatchesBranchPattern verifies the pattern matching helper.
+func TestMatchesBranchPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		branch  string
+		want    bool
+	}{
+		{"main", "main", true},
+		{"main", "develop", false},
+		{"/^main$/", "main", true},
+		{"/^main$/", "main-hotfix", false},
+		{"/feature-.*/", "feature-login", true},
+		{"/feature-.*/", "bugfix-login", false},
+		{"/invalid[/", "anything", false}, // bad regex
+	}
+	for _, tt := range tests {
+		got := matchesBranchPattern(tt.pattern, tt.branch)
+		if got != tt.want {
+			t.Errorf("matchesBranchPattern(%q, %q) = %v, want %v", tt.pattern, tt.branch, got, tt.want)
+		}
+	}
+}
+

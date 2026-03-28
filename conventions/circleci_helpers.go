@@ -2,6 +2,8 @@ package conventions
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -62,17 +64,112 @@ type ciWorkflow struct {
 	Jobs []ciJobEntry `yaml:"jobs"`
 }
 
+// ciBranchFilter holds CircleCI branch filter configuration for a job entry.
+type ciBranchFilter struct {
+	Only   []string `yaml:"only"`
+	Ignore []string `yaml:"ignore"`
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler for ciBranchFilter to handle both
+// scalar ("only: main") and sequence ("only: [main, develop]") forms.
+func (f *ciBranchFilter) UnmarshalYAML(value *yaml.Node) error {
+	// Try decoding as a struct with Only/Ignore fields first.
+	type plain struct {
+		Only   yaml.Node `yaml:"only"`
+		Ignore yaml.Node `yaml:"ignore"`
+	}
+	var p plain
+	if err := value.Decode(&p); err != nil {
+		return err
+	}
+	f.Only = decodeStringOrList(&p.Only)
+	f.Ignore = decodeStringOrList(&p.Ignore)
+	return nil
+}
+
+// decodeStringOrList extracts a []string from a YAML node that may be a scalar
+// string or a sequence of strings.
+func decodeStringOrList(n *yaml.Node) []string {
+	if n == nil || n.Kind == 0 {
+		return nil
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return []string{n.Value}
+	case yaml.SequenceNode:
+		var result []string
+		for _, child := range n.Content {
+			if child.Kind == yaml.ScalarNode {
+				result = append(result, child.Value)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// ciJobFilters holds the filters block from a CircleCI job entry.
+type ciJobFilters struct {
+	Branches ciBranchFilter `yaml:"branches"`
+}
+
 // ciJobEntry represents a single entry in the jobs list of a workflow. In
 // CircleCI YAML, each entry is either a plain string (the job name) or a
-// mapping with a single key (the job name) and a value containing config.
-// We only care about the job name, so we decode either form into a string.
+// mapping with a single key (the job name) and a value containing config
+// (including optional branch filters).
 type ciJobEntry struct {
-	Name string
+	Name    string
+	Filters *ciJobFilters
+}
+
+// RunsOnBranch reports whether this job would run on the given branch based
+// on its CircleCI branch filters. If there are no filters, the job runs on
+// all branches. CircleCI regex patterns are delimited by /.../.
+func (e ciJobEntry) RunsOnBranch(branch string) bool {
+	if e.Filters == nil {
+		return true
+	}
+	f := e.Filters.Branches
+
+	// "ignore" takes precedence when both are set (per CircleCI docs, only
+	// one of only/ignore should be specified, but we handle both defensively).
+	if len(f.Ignore) > 0 {
+		for _, pattern := range f.Ignore {
+			if matchesBranchPattern(pattern, branch) {
+				return false
+			}
+		}
+	}
+
+	if len(f.Only) > 0 {
+		for _, pattern := range f.Only {
+			if matchesBranchPattern(pattern, branch) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return true
+}
+
+// matchesBranchPattern checks if a branch matches a CircleCI branch pattern.
+// Patterns wrapped in /.../ are treated as regular expressions; everything
+// else is an exact match.
+func matchesBranchPattern(pattern, branch string) bool {
+	if strings.HasPrefix(pattern, "/") && strings.HasSuffix(pattern, "/") && len(pattern) > 2 {
+		re, err := regexp.Compile(pattern[1 : len(pattern)-1])
+		if err != nil {
+			return false
+		}
+		return re.MatchString(branch)
+	}
+	return pattern == branch
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler for ciJobEntry. A job entry is
-// either a bare string or a single-key mapping. In both cases we extract just
-// the key/string as the job name.
+// either a bare string or a single-key mapping. We extract the job name and
+// any branch filters from the mapping value.
 func (e *ciJobEntry) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
 	case yaml.ScalarNode:
@@ -81,10 +178,22 @@ func (e *ciJobEntry) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	case yaml.MappingNode:
 		// Mapping: "- lucos/deploy-avalon:\n    requires: [...]"
-		// The first key is the job name.
-		if len(value.Content) >= 1 {
-			e.Name = value.Content[0].Value
+		// The first key is the job name; the value is the job config.
+		if len(value.Content) < 2 {
+			return nil
 		}
+		e.Name = value.Content[0].Value
+
+		// Decode the job config value to extract filters.
+		type jobConfig struct {
+			Filters *ciJobFilters `yaml:"filters"`
+		}
+		var cfg jobConfig
+		if err := value.Content[1].Decode(&cfg); err != nil {
+			// Non-fatal: we still have the name.
+			return nil
+		}
+		e.Filters = cfg.Filters
 		return nil
 	default:
 		return fmt.Errorf("unexpected YAML node kind %v for job entry", value.Kind)
@@ -120,6 +229,19 @@ func allJobNames(cfg *circleCIConfig) []string {
 		}
 	}
 	return names
+}
+
+// allJobEntries returns all job entries (with filters) across all workflows.
+func allJobEntries(cfg *circleCIConfig) []ciJobEntry {
+	var entries []ciJobEntry
+	for _, wf := range cfg.Workflows {
+		for _, job := range wf.Jobs {
+			if job.Name != "" {
+				entries = append(entries, job)
+			}
+		}
+	}
+	return entries
 }
 
 // hasLucosOrb reports whether the config declares the lucos deploy orb under
