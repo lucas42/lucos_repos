@@ -11,7 +11,7 @@ import (
 const dependabotAutoMergeReusableWorkflow = "lucas42/.github/.github/workflows/dependabot-auto-merge.yml"
 
 func init() {
-	// dependabot-auto-merge-workflow: system and component repos must have a
+	// dependabot-auto-merge-workflow: system, component, and script repos must have a
 	// Dependabot auto-merge workflow that delegates to the shared reusable
 	// workflow in lucas42/.github.
 	Register(Convention{
@@ -19,7 +19,7 @@ func init() {
 		Description: "Repository has a Dependabot auto-merge workflow that references the shared reusable workflow",
 		Rationale:   "Without auto-merge configured, Dependabot PRs pile up and require manual merging. The shared reusable workflow ensures consistent auto-merge behaviour across all repos. Repos that implement their own logic drift from the standard and may miss security fixes applied to the central workflow.",
 		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\n\npermissions:\n  pull-requests: write\n  contents: write\n\njobs:\n  dependabot:\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main\n```\n\nNote: use `pull_request` (not `pull_request_target`) and include the top-level `permissions:` block. Using `pull_request_target` with a reusable workflow call causes `startup_failure` on every non-Dependabot PR. Do not use `secrets: inherit`.",
-		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
+		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent, RepoTypeScript},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself — it cannot
 			// call itself without creating a circular dependency.
