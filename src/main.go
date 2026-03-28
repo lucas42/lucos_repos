@@ -106,9 +106,13 @@ func main() {
 	sweeper.scheduleTrackerEndpoint = os.Getenv("SCHEDULE_TRACKER_ENDPOINT")
 	sweeper.Start()
 
+	prSweeper := NewPRSweeper(githubAuth)
+	prSweeper.Start()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", newDashboardHandler(db, sweeper))
+	mux.HandleFunc("GET /prs", newPRDashboardHandler(prSweeper))
 
 	mux.HandleFunc("GET /lucos_navbar.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
