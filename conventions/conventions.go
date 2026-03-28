@@ -548,6 +548,55 @@ func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string) ([]str
 	}
 }
 
+// checkRunsResponse is a subset of the GitHub check runs API response.
+type checkRunsResponse struct {
+	CheckRuns []checkRunEntry `json:"check_runs"`
+}
+
+// checkRunEntry is a single check run entry.
+type checkRunEntry struct {
+	Name string `json:"name"`
+}
+
+// GitHubCheckRunNamesFromBase fetches check run names for a given ref.
+// Returns nil (not an error) if the API returns 404.
+func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/commits/%s/check-runs?per_page=100", baseURL, repo, ref)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var runs checkRunsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+			return nil, fmt.Errorf("failed to decode check runs response: %w", err)
+		}
+		names := make([]string, len(runs.CheckRuns))
+		for i, r := range runs.CheckRuns {
+			names[i] = r.Name
+		}
+		return names, nil
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching check runs for %s/%s", resp.StatusCode, repo, ref)
+	}
+}
+
 // codeQLSupportedLanguages is the set of languages that CodeQL can analyse.
 // Language names match what the GitHub Languages API returns (title case).
 var codeQLSupportedLanguages = map[string]bool{
