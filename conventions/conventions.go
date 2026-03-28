@@ -382,12 +382,22 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 		if protection.RequiredStatusChecks == nil {
 			return []string{}, nil
 		}
-		// Merge both the legacy contexts field and the modern checks array.
-		// GitHub populates one or the other depending on how the check was configured.
-		result := make([]string, 0, len(protection.RequiredStatusChecks.Contexts)+len(protection.RequiredStatusChecks.Checks))
-		result = append(result, protection.RequiredStatusChecks.Contexts...)
+		// Merge both the legacy contexts field and the modern checks array,
+		// deduplicating entries that appear in both. GitHub may populate both
+		// fields with the same check names.
+		seen := make(map[string]bool)
+		var result []string
+		for _, name := range protection.RequiredStatusChecks.Contexts {
+			if !seen[name] {
+				seen[name] = true
+				result = append(result, name)
+			}
+		}
 		for _, c := range protection.RequiredStatusChecks.Checks {
-			result = append(result, c.Context)
+			if !seen[c.Context] {
+				seen[c.Context] = true
+				result = append(result, c.Context)
+			}
 		}
 		return result, nil
 	case http.StatusNotFound:

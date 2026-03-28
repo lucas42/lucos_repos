@@ -274,6 +274,46 @@ func TestGitHubRequiredStatusChecks_ReturnsChecksFromModernArray(t *testing.T) {
 	}
 }
 
+// TestGitHubRequiredStatusChecks_DeduplicatesContextsAndChecks verifies that
+// entries appearing in both the legacy contexts array and modern checks array
+// are deduplicated in the result.
+func TestGitHubRequiredStatusChecks_DeduplicatesContextsAndChecks(t *testing.T) {
+	// Build a response where "CodeQL" appears in both contexts and checks.
+	fixture := `{
+		"required_status_checks": {
+			"contexts": ["ci/circleci: build-amd64", "CodeQL"],
+			"checks": [
+				{"context": "ci/circleci: build-amd64", "app_id": 12345},
+				{"context": "CodeQL", "app_id": 67890}
+			]
+		}
+	}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/test_repo/branches/main/protection" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fixture))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	checks, err := GitHubRequiredStatusChecksFromBase(server.URL, "fake-token", "lucas42/test_repo", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(checks) != 2 {
+		t.Fatalf("expected 2 deduplicated checks, got %d: %v", len(checks), checks)
+	}
+	expected := []string{"ci/circleci: build-amd64", "CodeQL"}
+	for i, c := range checks {
+		if c != expected[i] {
+			t.Errorf("check[%d]: expected %q, got %q", i, expected[i], c)
+		}
+	}
+}
+
 // TestGitHubRequiredStatusChecks_Unprotected verifies that an unprotected branch
 // returns an empty slice without error.
 func TestGitHubRequiredStatusChecks_Unprotected(t *testing.T) {
