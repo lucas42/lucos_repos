@@ -41,6 +41,7 @@ func auditTestToken(t *testing.T, kid string, key *rsa.PrivateKey, owner string)
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss":              githubOIDCIssuer,
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(time.Hour).Unix(),
 		"repository_owner": owner,
 	})

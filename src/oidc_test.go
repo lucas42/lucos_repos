@@ -64,6 +64,7 @@ func TestOIDCValidator_ValidToken(t *testing.T) {
 
 	tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
 		"iss":              githubOIDCIssuer,
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(time.Hour).Unix(),
 		"repository_owner": "lucas42",
 		"repository":       "lucas42/lucos_repos",
@@ -88,6 +89,7 @@ func TestOIDCValidator_WrongOwner(t *testing.T) {
 
 	tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
 		"iss":              githubOIDCIssuer,
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(time.Hour).Unix(),
 		"repository_owner": "malicious-user",
 		"repository":       "malicious-user/evil-repo",
@@ -109,6 +111,7 @@ func TestOIDCValidator_ExpiredToken(t *testing.T) {
 
 	tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
 		"iss":              githubOIDCIssuer,
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(-time.Hour).Unix(),
 		"repository_owner": "lucas42",
 	})
@@ -116,6 +119,27 @@ func TestOIDCValidator_ExpiredToken(t *testing.T) {
 	_, err = v.ValidateToken(tokenStr)
 	if err == nil {
 		t.Fatal("expected error for expired token")
+	}
+}
+
+func TestOIDCValidator_WrongAudience(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := testJWKSServer(t, "test-kid-1", &key.PublicKey)
+	v := newTestValidator(t, srv.URL)
+
+	tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
+		"iss":              githubOIDCIssuer,
+		"aud":              "https://some-other-service.example.com",
+		"exp":              time.Now().Add(time.Hour).Unix(),
+		"repository_owner": "lucas42",
+	})
+
+	_, err = v.ValidateToken(tokenStr)
+	if err == nil {
+		t.Fatal("expected error for wrong audience")
 	}
 }
 
@@ -129,6 +153,7 @@ func TestOIDCValidator_WrongIssuer(t *testing.T) {
 
 	tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
 		"iss":              "https://evil.example.com",
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(time.Hour).Unix(),
 		"repository_owner": "lucas42",
 	})
@@ -150,6 +175,7 @@ func TestOIDCValidator_UnknownKid(t *testing.T) {
 
 	tokenStr := signToken(t, "unknown-kid", key, jwt.MapClaims{
 		"iss":              githubOIDCIssuer,
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(time.Hour).Unix(),
 		"repository_owner": "lucas42",
 	})
@@ -190,6 +216,7 @@ func TestOIDCValidator_JWKSCaching(t *testing.T) {
 	for range 2 {
 		tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
 			"iss":              githubOIDCIssuer,
+			"aud":              githubOIDCAudience,
 			"exp":              time.Now().Add(time.Hour).Unix(),
 			"repository_owner": "lucas42",
 		})
@@ -215,6 +242,7 @@ func TestOIDCValidator_MissingBearerToken(t *testing.T) {
 	// test the audit handler's Bearer prefix check.
 	tokenStr := signToken(t, "test-kid-1", key, jwt.MapClaims{
 		"iss":              githubOIDCIssuer,
+		"aud":              githubOIDCAudience,
 		"exp":              time.Now().Add(time.Hour).Unix(),
 		"repository_owner": "lucas42",
 	})

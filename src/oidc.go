@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	githubOIDCIssuer  = "https://token.actions.githubusercontent.com"
-	githubJWKSURL     = "https://token.actions.githubusercontent.com/.well-known/jwks"
-	jwksCacheDuration = time.Hour
+	githubOIDCIssuer   = "https://token.actions.githubusercontent.com"
+	githubOIDCAudience = "https://repos.l42.eu"
+	githubJWKSURL      = "https://token.actions.githubusercontent.com/.well-known/jwks"
+	jwksCacheDuration  = time.Hour
 )
 
 // GitHubOIDCValidator validates GitHub Actions OIDC tokens.
@@ -70,7 +71,7 @@ func (v *GitHubOIDCValidator) ValidateToken(tokenString string) (jwt.MapClaims, 
 			}
 		}
 		return key, nil
-	}, jwt.WithIssuer(githubOIDCIssuer), jwt.WithExpirationRequired())
+	}, jwt.WithIssuer(githubOIDCIssuer), jwt.WithAudience(githubOIDCAudience), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, fmt.Errorf("validating token: %w", err)
 	}
