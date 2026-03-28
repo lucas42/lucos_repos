@@ -342,3 +342,35 @@ func TestReusableWorkflowPinnedToSHA_APIError(t *testing.T) {
 		t.Errorf("expected Err!=nil for API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
 	}
 }
+
+// TestReusableWorkflowPinnedToSHA_FileFetchError verifies that when the
+// directory listing succeeds but an individual workflow file fetch returns a
+// server error, the convention returns Err (not a pass/fail).
+func TestReusableWorkflowPinnedToSHA_FileFetchError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.github/workflows":
+			w.Write([]byte(encodeDirListing([]string{
+				"code-reviewer-auto-merge.yml",
+			})))
+		case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	if result.Err == nil {
+		t.Errorf("expected Err!=nil for file-fetch error, got Pass=%v Detail=%q", result.Pass, result.Detail)
+	}
+}
