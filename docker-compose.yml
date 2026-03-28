@@ -12,7 +12,6 @@ services:
       - GITHUB_APP_ID
       - GITHUB_APP_PEM
       - SCHEDULE_TRACKER_ENDPOINT
-      - CLIENT_KEYS
     volumes:
       - data:/data
     healthcheck:

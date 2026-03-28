@@ -187,7 +187,8 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /api/status/", newSingleRepoStatusHandler(db))
-	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, os.Getenv("CLIENT_KEYS")))
+	oidcValidator := NewGitHubOIDCValidator("lucas42")
+	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, oidcValidator))
 
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := db.GetStatusReport()
