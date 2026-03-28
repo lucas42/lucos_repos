@@ -35,7 +35,7 @@ func init() {
 			}
 
 			// Step 1: parse the CircleCI config to find test* and build* job names.
-			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name)
+			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-jobs-in-required-checks", "repo", repo.Name, "step", "parse-circleci-config", "error", err)
 				return ConventionResult{

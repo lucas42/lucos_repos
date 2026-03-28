@@ -27,7 +27,7 @@ func init() {
 			if base == "" {
 				base = GitHubBaseURL
 			}
-			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".circleci/config.yml")
+			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".circleci/config.yml", repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-config-exists", "repo", repo.Name, "error", err)
 				return ConventionResult{

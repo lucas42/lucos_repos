@@ -39,7 +39,7 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/code-reviewer-auto-merge.yml")
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/code-reviewer-auto-merge.yml", repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "code-reviewer-auto-merge-workflow", "repo", repo.Name, "step", "fetch-workflow", "error", err)
 				return ConventionResult{

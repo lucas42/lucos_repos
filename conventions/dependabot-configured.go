@@ -46,7 +46,7 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dependabotPath)
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dependabotPath, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "dependabot-configured", "repo", repo.Name, "step", "fetch-file", "error", err)
 				return ConventionResult{

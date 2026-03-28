@@ -40,7 +40,7 @@ func init() {
 			var content []byte
 			var foundFilename string
 			for _, filename := range filenames {
-				c, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, filename)
+				c, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, filename, repo.Ref)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-workflow", "error", err)
 					return ConventionResult{

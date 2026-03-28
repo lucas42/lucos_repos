@@ -93,8 +93,8 @@ func (e *ciJobEntry) UnmarshalYAML(value *yaml.Node) error {
 
 // parseCIConfig fetches and parses the CircleCI config for a repo. It returns
 // (nil, nil) if the file does not exist.
-func parseCIConfig(baseURL, token, repo string) (*circleCIConfig, error) {
-	content, err := GitHubFileContentFromBase(baseURL, token, repo, ".circleci/config.yml")
+func parseCIConfig(baseURL, token, repo string, ref ...string) (*circleCIConfig, error) {
+	content, err := GitHubFileContentFromBase(baseURL, token, repo, ".circleci/config.yml", ref...)
 	if err != nil {
 		return nil, err
 	}

@@ -44,7 +44,7 @@ func init() {
 				}
 			}
 
-			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath)
+			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "has-codeql-workflow", "repo", repo.Name, "error", err)
 				return ConventionResult{
@@ -109,7 +109,7 @@ func init() {
 				}
 			}
 
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath)
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-file", "error", err)
 				return ConventionResult{

@@ -24,7 +24,7 @@ func init() {
 			if base == "" {
 				base = GitHubBaseURL
 			}
-			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name)
+			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-system-deploy-jobs", "repo", repo.Name, "error", err)
 				return ConventionResult{
