@@ -93,9 +93,8 @@ type PRSweeper struct {
 	githubAPIBase   string
 	sweepInterval   time.Duration
 
-	mu          sync.RWMutex
-	data        PRDashboardData
-	lastFetchAt time.Time
+	mu   sync.RWMutex
+	data PRDashboardData
 }
 
 // NewPRSweeper creates a new PRSweeper.
@@ -164,7 +163,6 @@ func (p *PRSweeper) runSweep() {
 		Repos:       results,
 		LastFetchAt: time.Now(),
 	}
-	p.lastFetchAt = time.Now()
 	p.mu.Unlock()
 
 	slog.Info("PR sweep completed", "repos_with_prs", len(results), "duration", time.Since(start))
@@ -197,18 +195,28 @@ func (p *PRSweeper) fetchAllRepos(token string) ([]gitHubRepo, error) {
 func (p *PRSweeper) fetchRepoPRCounts(token, repoName string) RepoPRCounts {
 	counts := RepoPRCounts{RepoName: repoName}
 
-	// Fetch open PRs.
-	url := fmt.Sprintf("%s/repos/%s/pulls?state=open&per_page=100", p.githubAPIBase, repoName)
-	body, err := p.githubGet(token, url)
-	if err != nil {
-		slog.Warn("PR sweep: failed to fetch PRs", "repo", repoName, "error", err)
-		return counts
-	}
-
+	// Fetch all open PRs with pagination.
 	var prs []ghPR
-	if err := json.Unmarshal(body, &prs); err != nil {
-		slog.Warn("PR sweep: failed to decode PRs", "repo", repoName, "error", err)
-		return counts
+	page := 1
+	const perPage = 100
+	for {
+		url := fmt.Sprintf("%s/repos/%s/pulls?state=open&per_page=%d&page=%d", p.githubAPIBase, repoName, perPage, page)
+		body, err := p.githubGet(token, url)
+		if err != nil {
+			slog.Warn("PR sweep: failed to fetch PRs", "repo", repoName, "page", page, "error", err)
+			return counts
+		}
+
+		var pagePRs []ghPR
+		if err := json.Unmarshal(body, &pagePRs); err != nil {
+			slog.Warn("PR sweep: failed to decode PRs", "repo", repoName, "error", err)
+			return counts
+		}
+		prs = append(prs, pagePRs...)
+		if len(pagePRs) < perPage {
+			break
+		}
+		page++
 	}
 
 	counts.Total = len(prs)
@@ -299,7 +307,10 @@ func (p *PRSweeper) getCheckStatus(token, repoName string, prNumber int) (passin
 
 	// Also fetch check runs.
 	crURL := fmt.Sprintf("%s/repos/%s/commits/refs/pull/%d/head/check-runs?per_page=100", p.githubAPIBase, repoName, prNumber)
-	crBody, err := p.githubGet(token, crURL)
+	crBody, crErr := p.githubGet(token, crURL)
+	if crErr != nil {
+		slog.Warn("PR sweep: failed to fetch check runs", "repo", repoName, "pr", prNumber, "error", crErr)
+	}
 
 	hasFailure := false
 	hasPending := false
@@ -315,7 +326,7 @@ func (p *PRSweeper) getCheckStatus(token, repoName string, prNumber int) (passin
 	}
 
 	// Process check runs.
-	if err == nil {
+	if crErr == nil {
 		var runs ghCheckRuns
 		if json.Unmarshal(crBody, &runs) == nil {
 			for _, run := range runs.CheckRuns {

@@ -130,12 +130,19 @@
 		}
 		.badge-compliant { background: #d1e7dd; color: #0a3622; }
 		.badge-violations { background: #f8d7da; color: #58151c; }
+		.nav-link {
+			font-size: 0.9rem;
+			margin-bottom: 1rem;
+		}
+		.nav-link a {
+			color: #0d6efd;
+		}
 	</style>
 </head>
 <body>
 	<lucos-navbar>Repos</lucos-navbar>
 	<main>
-		<div style="font-size: 0.9rem; margin-bottom: 1rem;"><a href="/prs" style="color: #0d6efd;">Open Pull Requests Dashboard &rarr;</a></div>
+		<div class="nav-link"><a href="/prs">Open Pull Requests Dashboard &rarr;</a></div>
 		<div class="summary">
 			<div class="stat-card neutral">
 				<div class="label">Total Repos</div>

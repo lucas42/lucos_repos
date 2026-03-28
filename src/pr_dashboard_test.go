@@ -130,3 +130,73 @@ func TestClassifyPR_AllPassing_NoReviews(t *testing.T) {
 		t.Errorf("expected PRStateNoReviews, got %d", state)
 	}
 }
+
+func classifyServer(statusState string, checkRunStatus string, checkRunConclusion string, reviews string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/status") {
+			w.Write([]byte(`{"state":"` + statusState + `","statuses":[{"state":"` + statusState + `"}]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/check-runs") {
+			if checkRunConclusion != "" {
+				w.Write([]byte(`{"check_runs":[{"status":"` + checkRunStatus + `","conclusion":"` + checkRunConclusion + `"}]}`))
+			} else {
+				w.Write([]byte(`{"check_runs":[{"status":"` + checkRunStatus + `"}]}`))
+			}
+			return
+		}
+		if strings.Contains(r.URL.Path, "/reviews") {
+			w.Write([]byte(reviews))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+func TestClassifyPR_PendingChecks(t *testing.T) {
+	server := classifyServer("pending", "completed", "success", `[]`)
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	state := p.classifyPR("fake", "lucas42/test", 1)
+	if state != PRStatePendingChecks {
+		t.Errorf("expected PRStatePendingChecks, got %d", state)
+	}
+}
+
+func TestClassifyPR_ChangesRequested(t *testing.T) {
+	server := classifyServer("success", "completed", "success",
+		`[{"user":{"login":"lucas42"},"state":"CHANGES_REQUESTED"}]`)
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	state := p.classifyPR("fake", "lucas42/test", 1)
+	if state != PRStateChangesRequested {
+		t.Errorf("expected PRStateChangesRequested, got %d", state)
+	}
+}
+
+func TestClassifyPR_BotApprovedOnly(t *testing.T) {
+	server := classifyServer("success", "completed", "success",
+		`[{"user":{"login":"lucos-code-reviewer[bot]"},"state":"APPROVED"}]`)
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	state := p.classifyPR("fake", "lucas42/test", 1)
+	if state != PRStateBotApprovedOnly {
+		t.Errorf("expected PRStateBotApprovedOnly, got %d", state)
+	}
+}
+
+func TestClassifyPR_FullyApproved(t *testing.T) {
+	server := classifyServer("success", "completed", "success",
+		`[{"user":{"login":"lucos-code-reviewer[bot]"},"state":"APPROVED"},{"user":{"login":"lucas42"},"state":"APPROVED"}]`)
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	state := p.classifyPR("fake", "lucas42/test", 1)
+	if state != PRStateFullyApproved {
+		t.Errorf("expected PRStateFullyApproved, got %d", state)
+	}
+}
