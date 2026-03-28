@@ -216,6 +216,57 @@ func TestAuditHandler_UnknownRepo(t *testing.T) {
 	}
 }
 
+func TestFetchConfigyRepoInfo(t *testing.T) {
+	configySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/systems" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]configySystem{
+			{ID: "lucos_photos", Hosts: []string{"avalon", "dagobah"}, UnsupervisedAgentCode: false},
+			{ID: "lucos_arachne", Hosts: []string{"avalon"}, UnsupervisedAgentCode: true},
+		})
+	}))
+	t.Cleanup(configySrv.Close)
+
+	t.Run("known system", func(t *testing.T) {
+		hosts, unsupervised, err := fetchConfigyRepoInfo(configySrv.URL, "lucas42/lucos_photos")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(hosts) != 2 || hosts[0] != "avalon" || hosts[1] != "dagobah" {
+			t.Errorf("expected [avalon dagobah], got %v", hosts)
+		}
+		if unsupervised {
+			t.Error("expected unsupervisedAgentCode=false")
+		}
+	})
+
+	t.Run("unsupervised system", func(t *testing.T) {
+		_, unsupervised, err := fetchConfigyRepoInfo(configySrv.URL, "lucas42/lucos_arachne")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !unsupervised {
+			t.Error("expected unsupervisedAgentCode=true")
+		}
+	})
+
+	t.Run("unknown repo", func(t *testing.T) {
+		hosts, unsupervised, err := fetchConfigyRepoInfo(configySrv.URL, "lucas42/unknown_thing")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if hosts != nil {
+			t.Errorf("expected nil hosts for unknown repo, got %v", hosts)
+		}
+		if unsupervised {
+			t.Error("expected unsupervisedAgentCode=false for unknown repo")
+		}
+	})
+}
+
 func TestAuditRateLimiter(t *testing.T) {
 	rl := newAuditRateLimiter(2, time.Minute)
 
