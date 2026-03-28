@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -123,6 +124,40 @@ func (rl *auditRateLimiter) allow(repo string) bool {
 	return true
 }
 
+// fetchConfigyRepoInfo fetches system metadata from configy for a specific repo.
+// Returns hosts and unsupervisedAgentCode if the repo is a known system; nil hosts otherwise.
+func fetchConfigyRepoInfo(configyBase, repoName string) (hosts []string, unsupervisedAgentCode bool, err error) {
+	url := configyBase + "/systems"
+	resp, err := http.Get(url) //nolint:gosec // URL comes from trusted config
+	if err != nil {
+		return nil, false, fmt.Errorf("configy systems request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("configy /systems returned %d", resp.StatusCode)
+	}
+
+	var systems []configySystem
+	if err := json.NewDecoder(resp.Body).Decode(&systems); err != nil {
+		return nil, false, fmt.Errorf("failed to decode configy systems: %w", err)
+	}
+
+	// Extract the short repo name (e.g. "lucos_photos" from "lucas42/lucos_photos").
+	parts := strings.SplitN(repoName, "/", 2)
+	shortName := repoName
+	if len(parts) == 2 {
+		shortName = parts[1]
+	}
+
+	for _, sys := range systems {
+		if sys.ID == shortName {
+			return sys.Hosts, sys.UnsupervisedAgentCode, nil
+		}
+	}
+	return nil, false, nil
+}
+
 // newAuditHandler returns the POST /api/audit/{repo}?ref={ref} handler.
 func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string, oidcValidator *GitHubOIDCValidator) http.HandlerFunc {
 	limiter := newAuditRateLimiter(10, time.Minute)
@@ -178,13 +213,22 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string,
 			return
 		}
 
+		// Fetch configy metadata (hosts, unsupervisedAgentCode) for the repo.
+		hosts, unsupervisedAgentCode, configyErr := fetchConfigyRepoInfo(configyBaseURL, repoName)
+		if configyErr != nil {
+			slog.Warn("Failed to fetch configy data for audit, proceeding without hosts",
+				"repo", repoName, "error", configyErr)
+		}
+
 		// Run all applicable conventions against the ref.
 		ctx := conventions.RepoContext{
-			Name:          repoName,
-			GitHubToken:   ghToken,
-			Type:          baseline.Type,
-			GitHubBaseURL: githubAPIBase,
-			Ref:           ref,
+			Name:                  repoName,
+			GitHubToken:           ghToken,
+			Type:                  baseline.Type,
+			Hosts:                 hosts,
+			GitHubBaseURL:         githubAPIBase,
+			Ref:                   ref,
+			UnsupervisedAgentCode: unsupervisedAgentCode,
 		}
 
 		allConventions := conventions.All()
