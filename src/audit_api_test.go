@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"lucos_repos/conventions"
 )
@@ -119,7 +120,7 @@ func TestAuditHandler_UnknownRepo(t *testing.T) {
 }
 
 func TestAuditRateLimiter(t *testing.T) {
-	rl := newAuditRateLimiter(2, 60*1e9) // 2 per minute
+	rl := newAuditRateLimiter(2, time.Minute)
 
 	if !rl.allow("repo1") {
 		t.Error("first request should be allowed")

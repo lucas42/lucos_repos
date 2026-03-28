@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 )
 
@@ -171,7 +172,7 @@ func GitHubFileExists(token, repo, path string) (bool, error) {
 func GitHubFileExistsFromBase(baseURL, token, repo, path string, ref ...string) (bool, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
 	if len(ref) > 0 && ref[0] != "" {
-		url += "?ref=" + ref[0]
+		url += "?ref=" + neturl.QueryEscape(ref[0])
 	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -218,7 +219,7 @@ func GitHubFileContent(token, repo, path string) ([]byte, error) {
 func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string) ([]byte, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
 	if len(ref) > 0 && ref[0] != "" {
-		url += "?ref=" + ref[0]
+		url += "?ref=" + neturl.QueryEscape(ref[0])
 	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -438,7 +439,7 @@ func GitHubListDirectory(token, repo, path string) ([]gitHubDirEntry, error) {
 func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...string) ([]gitHubDirEntry, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
 	if len(ref) > 0 && ref[0] != "" {
-		url += "?ref=" + ref[0]
+		url += "?ref=" + neturl.QueryEscape(ref[0])
 	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

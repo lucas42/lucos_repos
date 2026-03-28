@@ -115,6 +115,10 @@ func (rl *auditRateLimiter) allow(repo string) bool {
 		return false
 	}
 
+	if len(valid) == 0 {
+		delete(rl.requests, repo)
+	}
+
 	rl.requests[repo] = append(valid, now)
 	return true
 }
