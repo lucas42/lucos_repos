@@ -134,3 +134,49 @@ func TestValidRequiredStatusChecks_ProtectionAPIError(t *testing.T) {
 		t.Error("expected Err when protection API fails")
 	}
 }
+
+func TestValidRequiredStatusChecks_StatusesAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			w.WriteHeader(http.StatusOK)
+			w.Write(branchProtectionFixture([]string{"ci/circleci: test"}))
+		case "/repos/lucas42/test_repo/commits/heads/main/status":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "valid-required-status-checks").Check(repo)
+	if result.Err == nil {
+		t.Error("expected Err when statuses API fails")
+	}
+}
+
+func TestValidRequiredStatusChecks_CheckRunsAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			w.WriteHeader(http.StatusOK)
+			w.Write(branchProtectionFixture([]string{"ci/circleci: test"}))
+		case "/repos/lucas42/test_repo/commits/heads/main/status":
+			w.Write([]byte(`{"statuses":[{"context":"ci/circleci: test"}]}`))
+		case "/repos/lucas42/test_repo/commits/heads/main/check-runs":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "valid-required-status-checks").Check(repo)
+	if result.Err == nil {
+		t.Error("expected Err when check-runs API fails")
+	}
+}
