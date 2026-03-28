@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"lucos_repos/conventions"
 )
@@ -18,10 +20,10 @@ type singleRepoStatusResponse struct {
 
 // auditResponse is the response for POST /api/audit/{repo}?ref={ref}.
 type auditResponse struct {
-	Repo             string                    `json:"repo"`
-	Pass             bool                      `json:"pass"`
-	Regressions      []string                  `json:"regressions"`
-	BaselineFailures []string                  `json:"baseline_failures"`
+	Repo             string                      `json:"repo"`
+	Pass             bool                        `json:"pass"`
+	Regressions      []string                    `json:"regressions"`
+	BaselineFailures []string                    `json:"baseline_failures"`
 	Details          map[string]auditCheckDetail `json:"details"`
 }
 
@@ -77,16 +79,60 @@ func newSingleRepoStatusHandler(db *DB) http.HandlerFunc {
 	}
 }
 
+// auditRateLimiter tracks per-repo request timestamps for rate limiting.
+type auditRateLimiter struct {
+	mu       sync.Mutex
+	requests map[string][]time.Time
+	limit    int
+	window   time.Duration
+}
+
+func newAuditRateLimiter(limit int, window time.Duration) *auditRateLimiter {
+	return &auditRateLimiter{
+		requests: make(map[string][]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+}
+
+func (rl *auditRateLimiter) allow(repo string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+
+	// Remove expired entries.
+	var valid []time.Time
+	for _, t := range rl.requests[repo] {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= rl.limit {
+		rl.requests[repo] = valid
+		return false
+	}
+
+	rl.requests[repo] = append(valid, now)
+	return true
+}
+
 // newAuditHandler returns the POST /api/audit/{repo}?ref={ref} handler.
-func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBaseURL string, apiKey string) http.HandlerFunc {
+func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string, apiKey string) http.HandlerFunc {
+	limiter := newAuditRateLimiter(10, time.Minute)
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		// API key auth.
-		if apiKey != "" {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader != "Bearer "+apiKey {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
+		// API key auth — required when configured.
+		if apiKey == "" {
+			http.Error(w, "audit endpoint not configured (LUCOS_REPOS_API_KEY not set)", http.StatusServiceUnavailable)
+			return
+		}
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "Bearer "+apiKey {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
 
 		// Extract repo name from path: /api/audit/lucas42/lucos_photos
@@ -98,6 +144,12 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBaseURL stri
 		repoName := path
 		ref := r.URL.Query().Get("ref")
 
+		// Rate limit: 10 requests per minute per repo.
+		if !limiter.allow(repoName) {
+			http.Error(w, "rate limit exceeded (10 requests per minute per repo)", http.StatusTooManyRequests)
+			return
+		}
+
 		// Get baseline from the database.
 		report, err := db.GetStatusReport()
 		if err != nil {
@@ -106,7 +158,11 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBaseURL stri
 			return
 		}
 
-		baseline := report.Repos[repoName]
+		baseline, ok := report.Repos[repoName]
+		if !ok {
+			http.Error(w, "repo not found in audit data", http.StatusNotFound)
+			return
+		}
 
 		// Get a GitHub token.
 		token, err := githubAuth.GetInstallationToken()
@@ -121,7 +177,7 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBaseURL stri
 			Name:          repoName,
 			GitHubToken:   token,
 			Type:          baseline.Type,
-			GitHubBaseURL: githubAPIBaseURL,
+			GitHubBaseURL: githubAPIBase,
 			Ref:           ref,
 		}
 
