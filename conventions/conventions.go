@@ -498,6 +498,56 @@ func GitHubRepoLanguagesFromBase(baseURL, token, repo string) (map[string]int, e
 	}
 }
 
+// combinedStatusResponse is a subset of the GitHub combined status API response.
+type combinedStatusResponse struct {
+	Statuses []statusEntry `json:"statuses"`
+}
+
+// statusEntry is a single status entry from the combined status response.
+type statusEntry struct {
+	Context string `json:"context"`
+}
+
+// GitHubCommitStatusContextsFromBase fetches the combined status for a ref and
+// returns the list of status context names. Returns nil (not an error) if the
+// API returns 404.
+func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string) ([]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/commits/%s/status", baseURL, repo, ref)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var combined combinedStatusResponse
+		if err := json.NewDecoder(resp.Body).Decode(&combined); err != nil {
+			return nil, fmt.Errorf("failed to decode combined status response: %w", err)
+		}
+		contexts := make([]string, len(combined.Statuses))
+		for i, s := range combined.Statuses {
+			contexts[i] = s.Context
+		}
+		return contexts, nil
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching commit status for %s/%s", resp.StatusCode, repo, ref)
+	}
+}
+
 // codeQLSupportedLanguages is the set of languages that CodeQL can analyse.
 // Language names match what the GitHub Languages API returns (title case).
 var codeQLSupportedLanguages = map[string]bool{
