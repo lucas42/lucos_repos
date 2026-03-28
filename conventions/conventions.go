@@ -10,6 +10,22 @@ import (
 	"strings"
 )
 
+// httpClient is the HTTP client used by all convention helper functions.
+// It defaults to http.DefaultClient. Use SetHTTPClient to override it
+// with a caching transport during sweeps.
+var httpClient = http.DefaultClient
+
+// SetHTTPClient sets the HTTP client used by convention helper functions.
+// Pass nil to reset to http.DefaultClient. This is not safe for concurrent
+// use — call it before starting a sweep, not during one.
+func SetHTTPClient(c *http.Client) {
+	if c == nil {
+		httpClient = http.DefaultClient
+	} else {
+		httpClient = c
+	}
+}
+
 // RepoType categorises a repository based on its presence in lucos_configy.
 type RepoType string
 
@@ -182,7 +198,7 @@ func GitHubFileExistsFromBase(baseURL, token, repo, path string, ref ...string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -229,7 +245,7 @@ func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -295,7 +311,7 @@ func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -336,7 +352,7 @@ func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -376,7 +392,7 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -449,7 +465,7 @@ func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...strin
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -491,7 +507,7 @@ func GitHubRepoLanguagesFromBase(baseURL, token, repo string) (map[string]int, e
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -537,7 +553,7 @@ func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string) ([]str
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -586,7 +602,7 @@ func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, er
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
