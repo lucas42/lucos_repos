@@ -2,9 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"net/http"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"lucos_repos/conventions"

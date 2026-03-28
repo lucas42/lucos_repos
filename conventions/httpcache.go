@@ -22,6 +22,12 @@ type cachedResponse struct {
 //
 // The cache is in-memory and scoped to the lifetime of the transport instance.
 // Create a new CachingTransport for each sweep to avoid stale data.
+//
+// Concurrency note: the cache is safe for concurrent reads, but two goroutines
+// requesting the same URL simultaneously may both make a network call (the
+// second write simply overwrites the first with an identical response). This is
+// acceptable for the current sequential sweep use case. If true dedup under
+// concurrency is needed, use a singleflight pattern instead.
 type CachingTransport struct {
 	// Wrapped is the underlying transport to use for actual network requests.
 	Wrapped http.RoundTripper
