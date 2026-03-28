@@ -267,6 +267,44 @@ services:
 	}
 }
 
+func TestStandardEnvVars_TruncatedTree(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	// Server serves compose file and a truncated tree response
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_test/contents/docker-compose.yml" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(composeFixture(compose))
+			return
+		}
+		if r.URL.Path == "/repos/lucas42/lucos_test/git/trees/HEAD" {
+			w.Header().Set("Content-Type", "application/json")
+			resp := gitTreeResponse{Tree: []gitTreeEntry{}, Truncated: true}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "standard-env-vars-in-compose").Check(repo)
+	if result.Err == nil {
+		t.Errorf("expected Err when tree response is truncated")
+	}
+}
+
 func TestStandardEnvVars_VarDeclaredWithValueInList(t *testing.T) {
 	compose := `
 services:

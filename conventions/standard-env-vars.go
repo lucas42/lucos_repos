@@ -184,6 +184,9 @@ func repoContainsEnvVar(baseURL, token, repo, envVar string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("error fetching repo tree: %w", err)
 	}
+	if tree.Truncated {
+		return false, fmt.Errorf("git tree response was truncated for %s; cannot reliably search for env var usage", repo)
+	}
 
 	// Find source files to check. Exclude the conventions/ directory to avoid
 	// matching the convention definitions themselves (which reference env var
