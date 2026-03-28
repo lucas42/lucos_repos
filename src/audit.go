@@ -179,6 +179,21 @@ func (s *AuditSweeper) reportToScheduleTracker(status, message string) {
 // longer in scope) are deleted from the database.
 func (s *AuditSweeper) sweep() error {
 	start := time.Now()
+
+	// Enable in-memory response caching for the duration of this sweep.
+	// This deduplicates identical GitHub API calls made by different conventions
+	// against the same repo (e.g. branch protection fetched 3-5x per repo).
+	cachingTransport := conventions.NewCachingTransport(http.DefaultTransport)
+	cachingClient := &http.Client{Transport: cachingTransport}
+	conventions.SetHTTPClient(cachingClient)
+	defer conventions.SetHTTPClient(nil)
+	defer func() {
+		slog.Info("GitHub API cache stats",
+			"unique_urls", cachingTransport.Stats(),
+			"cache_hits", cachingTransport.Hits(),
+			"network_calls", cachingTransport.Misses(),
+		)
+	}()
 	token, err := s.githubAuth.GetInstallationToken()
 	if err != nil {
 		return fmt.Errorf("failed to get GitHub token: %w", err)

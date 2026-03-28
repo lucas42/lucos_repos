@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"lucos_repos/conventions"
@@ -45,6 +46,19 @@ type DryRunSummary struct {
 // runAuditDryRun runs a full convention sweep without creating issues or writing
 // to any database. Findings are written as JSON to stdout.
 func runAuditDryRun() {
+	// Enable in-memory response caching to deduplicate GitHub API calls.
+	cachingTransport := conventions.NewCachingTransport(http.DefaultTransport)
+	cachingClient := &http.Client{Transport: cachingTransport}
+	conventions.SetHTTPClient(cachingClient)
+	defer conventions.SetHTTPClient(nil)
+	defer func() {
+		slog.Info("GitHub API cache stats",
+			"unique_urls", cachingTransport.Stats(),
+			"cache_hits", cachingTransport.Hits(),
+			"network_calls", cachingTransport.Misses(),
+		)
+	}()
+
 	githubAuth, err := NewGitHubAuthClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to initialise GitHub App authentication: %v\n", err)
