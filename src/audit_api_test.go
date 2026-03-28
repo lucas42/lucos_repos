@@ -75,7 +75,7 @@ func TestSingleRepoStatusHandler_BadPath(t *testing.T) {
 	}
 }
 
-func TestAuditHandler_NoAPIKey(t *testing.T) {
+func TestAuditHandler_NoClientKeys(t *testing.T) {
 	db := openTestDB(t)
 
 	handler := newAuditHandler(db, nil, "", "")
@@ -85,37 +85,70 @@ func TestAuditHandler_NoAPIKey(t *testing.T) {
 	handler(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503 when API key not configured, got %d", w.Code)
+		t.Errorf("expected 503 when CLIENT_KEYS not configured, got %d", w.Code)
 	}
 }
 
-func TestAuditHandler_WrongAPIKey(t *testing.T) {
+func TestAuditHandler_WrongKey(t *testing.T) {
 	db := openTestDB(t)
 
-	handler := newAuditHandler(db, nil, "", "correct-key")
+	handler := newAuditHandler(db, nil, "", "github:production=correct-key")
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
-	req.Header.Set("Authorization", "Bearer wrong-key")
+	req.Header.Set("Authorization", "Key wrong-key")
 	w := httptest.NewRecorder()
 
 	handler(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 for wrong API key, got %d", w.Code)
+		t.Errorf("expected 401 for wrong key, got %d", w.Code)
+	}
+}
+
+func TestAuditHandler_BearerSchemeRejected(t *testing.T) {
+	db := openTestDB(t)
+
+	handler := newAuditHandler(db, nil, "", "github:production=test-key")
+	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
+	req.Header.Set("Authorization", "Bearer test-key")
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for Bearer scheme (must use Key), got %d", w.Code)
 	}
 }
 
 func TestAuditHandler_UnknownRepo(t *testing.T) {
 	db := openTestDB(t)
 
-	handler := newAuditHandler(db, nil, "", "test-key")
+	handler := newAuditHandler(db, nil, "", "github:production=test-key")
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/unknown_repo?ref=my-branch", nil)
-	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Authorization", "Key test-key")
 	w := httptest.NewRecorder()
 
 	handler(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown repo, got %d", w.Code)
+	}
+}
+
+func TestParseClientKeys(t *testing.T) {
+	keys := parseClientKeys("github:production=abc123;lucos_navbar:development=def456")
+	if !keys["abc123"] {
+		t.Error("expected abc123 to be a valid key")
+	}
+	if !keys["def456"] {
+		t.Error("expected def456 to be a valid key")
+	}
+	if keys["github:production=abc123"] {
+		t.Error("full entry should not be a valid key")
+	}
+
+	empty := parseClientKeys("")
+	if len(empty) != 0 {
+		t.Errorf("expected 0 keys from empty string, got %d", len(empty))
 	}
 }
 

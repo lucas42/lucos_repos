@@ -187,7 +187,7 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /api/status/", newSingleRepoStatusHandler(db))
-	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, os.Getenv("LUCOS_REPOS_API_KEY")))
+	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, os.Getenv("CLIENT_KEYS")))
 
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := db.GetStatusReport()
