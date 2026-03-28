@@ -123,18 +123,36 @@ func (rl *auditRateLimiter) allow(repo string) bool {
 	return true
 }
 
+// parseClientKeys parses a CLIENT_KEYS string (semicolon-separated "label=key"
+// pairs) and returns the set of valid keys.
+func parseClientKeys(raw string) map[string]bool {
+	keys := make(map[string]bool)
+	for _, entry := range strings.Split(raw, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		// Extract the key value after the last '='.
+		if idx := strings.LastIndex(entry, "="); idx >= 0 && idx < len(entry)-1 {
+			keys[entry[idx+1:]] = true
+		}
+	}
+	return keys
+}
+
 // newAuditHandler returns the POST /api/audit/{repo}?ref={ref} handler.
-func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string, apiKey string) http.HandlerFunc {
+func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string, clientKeysRaw string) http.HandlerFunc {
 	limiter := newAuditRateLimiter(10, time.Minute)
+	validKeys := parseClientKeys(clientKeysRaw)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// API key auth — required when configured.
-		if apiKey == "" {
-			http.Error(w, "audit endpoint not configured (LUCOS_REPOS_API_KEY not set)", http.StatusServiceUnavailable)
+		// CLIENT_KEYS auth — required when configured.
+		if len(validKeys) == 0 {
+			http.Error(w, "audit endpoint not configured (CLIENT_KEYS not set)", http.StatusServiceUnavailable)
 			return
 		}
 		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer "+apiKey {
+		if !strings.HasPrefix(authHeader, "Key ") || !validKeys[strings.TrimPrefix(authHeader, "Key ")] {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
