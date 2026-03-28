@@ -55,6 +55,12 @@ type RepoContext struct {
 	// agent code enabled (unsupervisedAgentCode=true in lucos_configy).
 	// Only meaningful for RepoTypeSystem; always false for other types.
 	UnsupervisedAgentCode bool
+
+	// Ref is an optional git ref (branch name or SHA) to check content against.
+	// When set, content-fetching helpers append ?ref=X to GitHub Contents API calls.
+	// Settings-based checks (branch protection, required status checks) ignore it.
+	// When empty, the repo's default branch is used.
+	Ref string
 }
 
 // ConventionResult is the outcome of running a single convention against a repo.
@@ -162,8 +168,11 @@ func GitHubFileExists(token, repo, path string) (bool, error) {
 
 // GitHubFileExistsFromBase is the implementation of GitHubFileExists with an
 // injectable base URL, used by tests to point at a fake server.
-func GitHubFileExistsFromBase(baseURL, token, repo, path string) (bool, error) {
+func GitHubFileExistsFromBase(baseURL, token, repo, path string, ref ...string) (bool, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
+	if len(ref) > 0 && ref[0] != "" {
+		url += "?ref=" + ref[0]
+	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to build request: %w", err)
@@ -206,8 +215,11 @@ func GitHubFileContent(token, repo, path string) ([]byte, error) {
 
 // GitHubFileContentFromBase is the implementation of GitHubFileContent with an
 // injectable base URL, used by tests to point at a fake server.
-func GitHubFileContentFromBase(baseURL, token, repo, path string) ([]byte, error) {
+func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string) ([]byte, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
+	if len(ref) > 0 && ref[0] != "" {
+		url += "?ref=" + ref[0]
+	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
@@ -423,8 +435,11 @@ func GitHubListDirectory(token, repo, path string) ([]gitHubDirEntry, error) {
 
 // GitHubListDirectoryFromBase is the implementation of GitHubListDirectory
 // with an injectable base URL.
-func GitHubListDirectoryFromBase(baseURL, token, repo, path string) ([]gitHubDirEntry, error) {
+func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...string) ([]gitHubDirEntry, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
+	if len(ref) > 0 && ref[0] != "" {
+		url += "?ref=" + ref[0]
+	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)

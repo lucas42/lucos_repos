@@ -30,7 +30,7 @@ func init() {
 			// provides Docker-specific build and deploy jobs. Treat the absence
 			// of docker-compose.yml as a signal that this repo does not use
 			// Docker-based deployment, and skip the check.
-			hasCompose, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml")
+			hasCompose, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-uses-lucos-orb", "repo", repo.Name, "step", "check-compose", "error", err)
 				return ConventionResult{
@@ -46,7 +46,7 @@ func init() {
 				}
 			}
 
-			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name)
+			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-uses-lucos-orb", "repo", repo.Name, "error", err)
 				return ConventionResult{
