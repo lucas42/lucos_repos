@@ -119,11 +119,60 @@ func init() {
 				}
 			}
 
+			// Look up the actual status context names from HEAD on main so we
+			// can tell the user the exact check name to add, including the
+			// correct format (legacy "ci/circleci: ..." or bare).
+			suggestedNames := resolveCheckNames(base, repo.GitHubToken, repo.Name, missing)
+
 			return ConventionResult{
 				Convention: "circleci-jobs-in-required-checks",
 				Pass:       false,
-				Detail:     fmt.Sprintf("CircleCI test/build jobs not in required status checks: %v (required checks: %v)", missing, uniqueChecks),
+				Detail:     fmt.Sprintf("CircleCI test/build jobs not in required status checks. Add these exact names: %v (current required checks: %v)", suggestedNames, uniqueChecks),
 			}
 		},
 	})
+}
+
+// resolveCheckNames maps CI job names to their actual reported status context
+// names by fetching the combined commit status for HEAD on main. This tells us
+// whether CircleCI is using the legacy "ci/circleci: ..." format or bare names.
+// If the status API fails or a job can't be matched, the original job name is
+// returned as a fallback.
+func resolveCheckNames(baseURL, token, repo string, jobs []string) []string {
+	contexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, "heads/main")
+	if err != nil || contexts == nil {
+		// Can't determine actual format — return job names as-is.
+		return jobs
+	}
+
+	const circlePrefix = "ci/circleci: "
+
+	// Build a lookup from normalized job name → actual context string.
+	// "ci/circleci: build-amd64" normalizes to "build-amd64".
+	// "lucos/build-amd64" normalizes to both "lucos/build-amd64" and "build-amd64".
+	contextByJob := make(map[string]string)
+	for _, ctx := range contexts {
+		normalized := strings.TrimPrefix(ctx, circlePrefix)
+		contextByJob[normalized] = ctx
+		// Also map the bare segment for orb-namespaced names.
+		if i := strings.LastIndex(normalized, "/"); i >= 0 {
+			contextByJob[normalized[i+1:]] = ctx
+		}
+	}
+
+	result := make([]string, len(jobs))
+	for i, job := range jobs {
+		bareSegment := job
+		if j := strings.LastIndex(job, "/"); j >= 0 {
+			bareSegment = job[j+1:]
+		}
+		if actual, ok := contextByJob[job]; ok {
+			result[i] = actual
+		} else if actual, ok := contextByJob[bareSegment]; ok {
+			result[i] = actual
+		} else {
+			result[i] = job
+		}
+	}
+	return result
 }

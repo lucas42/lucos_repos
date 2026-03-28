@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -199,6 +200,45 @@ func TestCircleCIJobsInRequiredChecks_DuplicateChecksNoDuplicateDetail(t *testin
 	}
 	if count > 1 {
 		t.Errorf("expected 'ci/circleci: test' to appear once in detail, appeared %d times: %q", count, result.Detail)
+	}
+}
+
+// TestCircleCIJobsInRequiredChecks_MissingJobShowsActualFormat verifies that
+// when a job is missing from required checks, the Detail includes the actual
+// check name format from the commit status API (e.g. "ci/circleci: build-amd64"
+// rather than the bare CI config name "lucos/build-amd64").
+func TestCircleCIJobsInRequiredChecks_MissingJobShowsActualFormat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.circleci/config.yml":
+			w.Write([]byte(encodedWorkflowConfig()))
+		case "/repos/lucas42/test_repo/branches/main/protection":
+			// Only "test" is required — "build" is missing.
+			w.Write([]byte(encodedProtectionWithChecks([]string{"ci/circleci: test"})))
+		case "/repos/lucas42/test_repo/commits/heads/main/status":
+			// Commit status shows legacy format for both jobs.
+			w.Write([]byte(`{"statuses":[{"context":"ci/circleci: test"},{"context":"ci/circleci: build-amd64"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "circleci-jobs-in-required-checks").Check(repo)
+	if result.Pass {
+		t.Fatalf("expected Pass=false, got Pass=true")
+	}
+	// The detail should suggest the legacy-format name, not the bare CI config name.
+	if !strings.Contains(result.Detail, "ci/circleci: build-amd64") {
+		t.Errorf("expected Detail to contain legacy format 'ci/circleci: build-amd64', got: %s", result.Detail)
 	}
 }
 
