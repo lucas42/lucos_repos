@@ -12,7 +12,7 @@ func init() {
 		ID:          "valid-required-status-checks",
 		Description: "All required status checks on main correspond to checks that are actually reported",
 		Rationale:   "Branch protection check name mismatches are insidious — they cause zero errors and silently prevent all merges. This happens when check names change format (e.g. CodeQL migrating from 'Analyze (javascript)' to 'CodeQL') but the branch protection rules are not updated. Without automated detection, these are only discovered when someone notices PRs have been stuck.",
-		Guidance:    "Go to the repository's Settings → Branches → Branch protection rules for `main`. Review the required status checks and remove or update any that do not match an active check. Compare against the checks listed in the GitHub Checks tab of a recent PR. Note: this check only samples HEAD of main — if the most recent commit didn't trigger all CI checks (e.g. docs-only change with path filters), this convention may report a false positive that clears on the next full-CI commit.",
+		Guidance:    "Go to the repository's Settings → Branches → Branch protection rules for `main`. Review the required status checks and remove or update any that do not match an active check. Compare against the checks listed in the GitHub Checks tab of a recent PR. For push-only failures: the check runs on push to main but not on PRs — either reconfigure the workflow to also trigger on pull_request, or remove the check from branch protection. Note: the main-branch check samples HEAD of main — if the most recent commit didn't trigger all CI checks (e.g. docs-only change with path filters), this convention may report a false positive that clears on the next full-CI commit.",
 		AppliesTo:     []RepoType{RepoTypeSystem, RepoTypeComponent},
 		ScheduledOnly: true,
 		Check: func(repo RepoContext) ConventionResult {
@@ -87,18 +87,61 @@ func init() {
 				}
 			}
 
-			if len(stale) == 0 {
+			if len(stale) > 0 {
+				return ConventionResult{
+					Convention: "valid-required-status-checks",
+					Pass:       false,
+					Detail:     fmt.Sprintf("required status checks not reported on HEAD of main (likely stale/renamed): %v — these will silently block all PRs from merging", stale),
+				}
+			}
+
+			// Step 4: detect push-only checks. Sample check runs from a
+			// recent PR and flag any required check present on main but
+			// absent from the PR — these only run on push events and will
+			// block all PR merges.
+			prCheckRunNames, err := GitHubRecentPRCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "valid-required-status-checks", "repo", repo.Name, "step", "fetch-pr-check-runs", "error", err)
+				return ConventionResult{
+					Convention: "valid-required-status-checks",
+					Err:        fmt.Errorf("error fetching PR check runs: %w", err),
+				}
+			}
+
+			if prCheckRunNames == nil {
+				// No recent PR to sample — can't detect push-only checks.
 				return ConventionResult{
 					Convention: "valid-required-status-checks",
 					Pass:       true,
-					Detail:     fmt.Sprintf("all %d required status checks match reported checks", len(requiredChecks)),
+					Detail:     fmt.Sprintf("all %d required status checks match reported checks on main; no recent PR available to detect push-only checks", len(requiredChecks)),
+				}
+			}
+
+			// Build the set of check names reported on the PR.
+			prReported := make(map[string]bool)
+			for _, name := range prCheckRunNames {
+				prReported[name] = true
+			}
+
+			var pushOnly []string
+			for _, check := range requiredChecks {
+				if reported[check] && !prReported[check] {
+					pushOnly = append(pushOnly, check)
+				}
+			}
+
+			if len(pushOnly) > 0 {
+				return ConventionResult{
+					Convention: "valid-required-status-checks",
+					Pass:       false,
+					Detail:     fmt.Sprintf("required status checks present on main but absent from recent PR (likely push-only): %v — these will block all PR merges because the checks never run on pull requests", pushOnly),
 				}
 			}
 
 			return ConventionResult{
 				Convention: "valid-required-status-checks",
-				Pass:       false,
-				Detail:     fmt.Sprintf("required status checks not reported on HEAD of main (likely stale/renamed): %v — these will silently block all PRs from merging", stale),
+				Pass:       true,
+				Detail:     fmt.Sprintf("all %d required status checks match reported checks", len(requiredChecks)),
 			}
 		},
 	})
