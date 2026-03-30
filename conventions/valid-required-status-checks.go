@@ -99,7 +99,7 @@ func init() {
 			// recent PR and flag any required check present on main but
 			// absent from the PR — these only run on push events and will
 			// block all PR merges.
-			prCheckRunNames, err := GitHubRecentPRCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name)
+			prCheckRunNames, err := GitHubRecentPRCheckNamesFromBase(base, repo.GitHubToken, repo.Name)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "valid-required-status-checks", "repo", repo.Name, "step", "fetch-pr-check-runs", "error", err)
 				return ConventionResult{

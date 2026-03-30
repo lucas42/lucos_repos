@@ -10,11 +10,12 @@ import (
 
 // validChecksServerOpts configures the test server for valid-required-status-checks tests.
 type validChecksServerOpts struct {
-	protectionBody    []byte
-	statusContexts    []string
-	checkRunNames     []string // check runs on HEAD of main
-	prSHA             string   // if non-empty, the PR list endpoint returns a PR with this head SHA
-	prCheckRunNames   []string // check runs on the PR head commit
+	protectionBody      []byte
+	statusContexts      []string
+	checkRunNames       []string // check runs on HEAD of main
+	prSHA               string   // if non-empty, the PR list endpoint returns a PR with this head SHA
+	prCheckRunNames     []string // check runs on the PR head commit
+	prStatusContexts    []string // status contexts on the PR head commit
 }
 
 // validChecksServer creates a test server for valid-required-status-checks tests.
@@ -76,16 +77,26 @@ func validChecksServerFull(t *testing.T, opts validChecksServerOpts) *httptest.S
 				json.NewEncoder(w).Encode([]struct{}{})
 			}
 		default:
-			// Handle PR head commit check-runs (dynamic SHA path).
-			if opts.prSHA != "" && r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.prSHA+"/check-runs" {
-				resp := checkRunsResp{}
-				for _, name := range opts.prCheckRunNames {
-					resp.CheckRuns = append(resp.CheckRuns, checkRun{Name: name})
+			// Handle PR head commit endpoints (dynamic SHA path).
+			if opts.prSHA != "" {
+				switch r.URL.Path {
+				case "/repos/lucas42/test_repo/commits/" + opts.prSHA + "/check-runs":
+					resp := checkRunsResp{}
+					for _, name := range opts.prCheckRunNames {
+						resp.CheckRuns = append(resp.CheckRuns, checkRun{Name: name})
+					}
+					json.NewEncoder(w).Encode(resp)
+					return
+				case "/repos/lucas42/test_repo/commits/" + opts.prSHA + "/status":
+					resp := combinedStatusResponse{}
+					for _, ctx := range opts.prStatusContexts {
+						resp.Statuses = append(resp.Statuses, statusEntry{Context: ctx})
+					}
+					json.NewEncoder(w).Encode(resp)
+					return
 				}
-				json.NewEncoder(w).Encode(resp)
-			} else {
-				w.WriteHeader(http.StatusNotFound)
 			}
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 }
@@ -171,14 +182,16 @@ func TestValidRequiredStatusChecks_NoReportedChecks(t *testing.T) {
 
 func TestValidRequiredStatusChecks_PushOnlyCheck(t *testing.T) {
 	// Required: "ci/circleci: test" and "Analyze (actions)"
-	// Main reports both. PR only reports "ci/circleci: test".
+	// Main reports both (circleci via status, Analyze via check run).
+	// PR reports circleci (via status) but NOT "Analyze (actions)".
 	// "Analyze (actions)" is push-only — present on main but absent from PR.
 	server := validChecksServerFull(t, validChecksServerOpts{
-		protectionBody:  branchProtectionFixture([]string{"ci/circleci: test", "Analyze (actions)"}),
-		statusContexts:  []string{"ci/circleci: test"},
-		checkRunNames:   []string{"Analyze (actions)"},
-		prSHA:           "abc123",
-		prCheckRunNames: []string{"ci/circleci: test"},
+		protectionBody:   branchProtectionFixture([]string{"ci/circleci: test", "Analyze (actions)"}),
+		statusContexts:   []string{"ci/circleci: test"},
+		checkRunNames:    []string{"Analyze (actions)"},
+		prSHA:            "abc123",
+		prCheckRunNames:  nil,
+		prStatusContexts: []string{"ci/circleci: test"},
 	})
 	defer server.Close()
 
@@ -197,12 +210,14 @@ func TestValidRequiredStatusChecks_PushOnlyCheck(t *testing.T) {
 
 func TestValidRequiredStatusChecks_AllChecksOnPR(t *testing.T) {
 	// All required checks appear on both main and the PR — should pass.
+	// circleci reports via status API, CodeQL via check runs — both sources.
 	server := validChecksServerFull(t, validChecksServerOpts{
-		protectionBody:  branchProtectionFixture([]string{"ci/circleci: test", "CodeQL"}),
-		statusContexts:  []string{"ci/circleci: test"},
-		checkRunNames:   []string{"CodeQL"},
-		prSHA:           "def456",
-		prCheckRunNames: []string{"ci/circleci: test", "CodeQL"},
+		protectionBody:   branchProtectionFixture([]string{"ci/circleci: test", "CodeQL"}),
+		statusContexts:   []string{"ci/circleci: test"},
+		checkRunNames:    []string{"CodeQL"},
+		prSHA:            "def456",
+		prCheckRunNames:  []string{"CodeQL"},
+		prStatusContexts: []string{"ci/circleci: test"},
 	})
 	defer server.Close()
 

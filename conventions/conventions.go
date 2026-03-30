@@ -642,11 +642,12 @@ type pullRequestEntry struct {
 	} `json:"head"`
 }
 
-// GitHubRecentPRCheckRunNamesFromBase finds a recent PR (open, then recently
-// closed) and returns the check run names reported on its head commit. This is
-// used to detect checks that only run on push (present on main but absent from
-// PRs). Returns (nil, nil) if no suitable PR is found or the API is unavailable.
-func GitHubRecentPRCheckRunNamesFromBase(baseURL, token, repo string) ([]string, error) {
+// GitHubRecentPRCheckNamesFromBase finds a recent PR (open, then recently
+// closed) and returns all check names reported on its head commit — both
+// check runs and commit status contexts. This mirrors how the main-branch
+// side fetches both sources. Returns (nil, nil) if no suitable PR is found
+// or the API is unavailable.
+func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, error) {
 	// Try open PRs first, then recently closed.
 	for _, state := range []string{"open", "closed"} {
 		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=1", baseURL, repo, state)
@@ -681,8 +682,35 @@ func GitHubRecentPRCheckRunNamesFromBase(baseURL, token, repo string) ([]string,
 			continue
 		}
 
-		// Found a PR — fetch its check runs.
-		return GitHubCheckRunNamesFromBase(baseURL, token, repo, prs[0].Head.SHA)
+		sha := prs[0].Head.SHA
+
+		// Fetch both check runs and commit statuses for the PR head,
+		// mirroring the main-branch approach.
+		checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha)
+		if err != nil {
+			return nil, err
+		}
+		statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha)
+		if err != nil {
+			return nil, err
+		}
+
+		// Merge both sources into a single deduplicated list.
+		seen := make(map[string]bool)
+		var names []string
+		for _, name := range checkRunNames {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+		for _, ctx := range statusContexts {
+			if !seen[ctx] {
+				seen[ctx] = true
+				names = append(names, ctx)
+			}
+		}
+		return names, nil
 	}
 
 	// No suitable PR found.
