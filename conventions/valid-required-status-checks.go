@@ -13,7 +13,8 @@ func init() {
 		Description: "All required status checks on main correspond to checks that are actually reported",
 		Rationale:   "Branch protection check name mismatches are insidious — they cause zero errors and silently prevent all merges. This happens when check names change format (e.g. CodeQL migrating from 'Analyze (javascript)' to 'CodeQL') but the branch protection rules are not updated. Without automated detection, these are only discovered when someone notices PRs have been stuck.",
 		Guidance:    "Go to the repository's Settings → Branches → Branch protection rules for `main`. Review the required status checks and remove or update any that do not match an active check. Compare against the checks listed in the GitHub Checks tab of a recent PR. Note: this check only samples HEAD of main — if the most recent commit didn't trigger all CI checks (e.g. docs-only change with path filters), this convention may report a false positive that clears on the next full-CI commit.",
-		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
+		AppliesTo:     []RepoType{RepoTypeSystem, RepoTypeComponent},
+		ScheduledOnly: true,
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
 			if base == "" {

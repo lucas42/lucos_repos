@@ -57,6 +57,9 @@ func TestValidRequiredStatusChecks_Registered(t *testing.T) {
 	if !c.AppliesToType(RepoTypeComponent) {
 		t.Error("should apply to RepoTypeComponent")
 	}
+	if !c.ScheduledOnly {
+		t.Error("should be ScheduledOnly (must not run in PR audit mode)")
+	}
 }
 
 func TestValidRequiredStatusChecks_AllValid(t *testing.T) {
