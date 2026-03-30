@@ -126,6 +126,11 @@ type Convention struct {
 	// requires, which would create a circular dependency).
 	ExcludeRepos []string
 
+	// ScheduledOnly means this convention should only run during scheduled
+	// sweeps, not during PR audits. When true, the audit handler skips this
+	// convention when a ref parameter is present (i.e. PR mode).
+	ScheduledOnly bool
+
 	// Check runs the convention against a repo and returns the result.
 	Check func(repo RepoContext) ConventionResult
 }

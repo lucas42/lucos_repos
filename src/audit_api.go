@@ -243,6 +243,9 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string,
 			if !conv.AppliesToRepo(repoName) {
 				continue
 			}
+			if conv.ScheduledOnly && ref != "" {
+				continue
+			}
 
 			result := conv.Check(ctx)
 
