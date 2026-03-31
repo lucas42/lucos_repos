@@ -634,6 +634,89 @@ func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, er
 	}
 }
 
+// pullRequestEntry is a single PR from the GitHub pulls API.
+type pullRequestEntry struct {
+	Number int    `json:"number"`
+	Head   struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+}
+
+// GitHubRecentPRCheckNamesFromBase finds a recent PR (open, then recently
+// closed) and returns all check names reported on its head commit — both
+// check runs and commit status contexts. This mirrors how the main-branch
+// side fetches both sources. Returns (nil, nil) if no suitable PR is found
+// or the API is unavailable.
+func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, error) {
+	// Try open PRs first, then recently closed.
+	for _, state := range []string{"open", "closed"} {
+		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=1", baseURL, repo, state)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build PR list request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub API request failed: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			continue
+		}
+
+		var prs []pullRequestEntry
+		err = json.NewDecoder(resp.Body).Decode(&prs)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode PR list response: %w", err)
+		}
+
+		if len(prs) == 0 || prs[0].Head.SHA == "" {
+			continue
+		}
+
+		sha := prs[0].Head.SHA
+
+		// Fetch both check runs and commit statuses for the PR head,
+		// mirroring the main-branch approach.
+		checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha)
+		if err != nil {
+			return nil, err
+		}
+		statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha)
+		if err != nil {
+			return nil, err
+		}
+
+		// Merge both sources into a single deduplicated list.
+		seen := make(map[string]bool)
+		var names []string
+		for _, name := range checkRunNames {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+		for _, ctx := range statusContexts {
+			if !seen[ctx] {
+				seen[ctx] = true
+				names = append(names, ctx)
+			}
+		}
+		return names, nil
+	}
+
+	// No suitable PR found.
+	return nil, nil
+}
+
 // codeQLSupportedLanguages is the set of languages that CodeQL can analyse.
 // Language names match what the GitHub Languages API returns (title case).
 var codeQLSupportedLanguages = map[string]bool{
