@@ -83,6 +83,18 @@ func init() {
 				}
 			}
 
+			// secrets: inherit breaks Dependabot PRs because GitHub restricts
+			// secret access for Dependabot-triggered pull_request events.
+			// The reusable workflow falls back to GITHUB_TOKEN when secrets
+			// are unavailable, so inherit is unnecessary and harmful.
+			if strings.Contains(contentStr, "secrets: inherit") {
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Pass:       false,
+					Detail:     fmt.Sprintf("%s uses secrets: inherit — Dependabot PRs cannot access secrets on pull_request events; remove it", foundFilename),
+				}
+			}
+
 			// A top-level permissions block is required so the reusable workflow's
 			// job-level permissions are honoured under the pull_request event token.
 			if !strings.Contains(contentStr, "permissions:") {

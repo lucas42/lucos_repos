@@ -170,6 +170,50 @@ func TestDependabotAutoMergeWorkflow_MissingPermissions(t *testing.T) {
 	}
 }
 
+const secretsInheritYAML = `name: Dependabot auto-merge
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  dependabot:
+    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    secrets: inherit
+`
+
+// TestDependabotAutoMergeWorkflow_SecretsInherit verifies that a workflow using
+// secrets: inherit fails — Dependabot PRs cannot access secrets on pull_request events.
+func TestDependabotAutoMergeWorkflow_SecretsInherit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(secretsInheritYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for secrets: inherit workflow, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+}
+
 // TestDependabotAutoMergeWorkflow_InlineWorkflow verifies that a workflow
 // with inline logic (not using the reusable workflow) fails.
 func TestDependabotAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
