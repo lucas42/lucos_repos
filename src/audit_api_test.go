@@ -106,8 +106,13 @@ func TestSingleRepoStatusHandler_Found(t *testing.T) {
 	}
 	if check, ok := resp.Checks["test-convention"]; !ok {
 		t.Error("expected test-convention in checks")
-	} else if check.Status != "pass" {
-		t.Errorf("expected check status 'pass', got %q", check.Status)
+	} else {
+		if check.Status != "pass" {
+			t.Errorf("expected check status 'pass', got %q", check.Status)
+		}
+		if check.Detail != "all good" {
+			t.Errorf("expected check detail 'all good', got %q", check.Detail)
+		}
 	}
 }
 

@@ -392,6 +392,9 @@ func TestBuildJSONResponse(t *testing.T) {
 	if rx.Checks["conv-a"].Status != "pass" {
 		t.Errorf("conv-a: expected pass, got %q", rx.Checks["conv-a"].Status)
 	}
+	if rx.Checks["conv-a"].Detail != "ok" {
+		t.Errorf("conv-a: expected detail 'ok', got %q", rx.Checks["conv-a"].Detail)
+	}
 	if rx.Checks["conv-b"].Status != "fail" {
 		t.Errorf("conv-b: expected fail, got %q", rx.Checks["conv-b"].Status)
 	}

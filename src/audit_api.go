@@ -31,6 +31,7 @@ type auditResponse struct {
 type auditCheckDetail struct {
 	Baseline string `json:"baseline"` // "pass", "fail", or "unknown"
 	Current  string `json:"current"`  // "pass", "fail", or "error"
+	Detail   string `json:"detail,omitempty"`
 }
 
 // newSingleRepoStatusHandler returns the GET /api/status/{repo} handler.
@@ -66,6 +67,7 @@ func newSingleRepoStatusHandler(db *DB) http.HandlerFunc {
 				cr.Status = "fail"
 				cr.Issue = cs.IssueURL
 			}
+			cr.Detail = cs.Detail
 			checks[conv] = cr
 		}
 
@@ -270,6 +272,7 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string,
 			details[conv.ID] = auditCheckDetail{
 				Baseline: baselineState,
 				Current:  currentState,
+				Detail:   result.Detail,
 			}
 
 			// A regression is when baseline was pass but current is fail.
