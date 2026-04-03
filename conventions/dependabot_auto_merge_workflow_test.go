@@ -25,6 +25,9 @@ permissions:
 jobs:
   dependabot:
     uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    secrets:
+      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
+      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
 `
 
 const oldPullRequestTargetYAML = `name: Dependabot auto-merge
@@ -208,6 +211,50 @@ func TestDependabotAutoMergeWorkflow_SecretsInherit(t *testing.T) {
 	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
 	if result.Pass {
 		t.Errorf("expected Pass=false for secrets: inherit workflow, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+}
+
+const missingSecretsYAML = `name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  dependabot:
+    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+`
+
+// TestDependabotAutoMergeWorkflow_MissingSecrets verifies that a workflow missing
+// CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY in its secrets block fails.
+func TestDependabotAutoMergeWorkflow_MissingSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(missingSecretsYAML)))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false for workflow missing app secrets, got Detail=%q", result.Detail)
 	}
 	if result.Err != nil {
 		t.Errorf("expected Err=nil, got %v", result.Err)

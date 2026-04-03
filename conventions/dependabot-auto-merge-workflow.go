@@ -18,7 +18,7 @@ func init() {
 		ID:          "dependabot-auto-merge-workflow",
 		Description: "Repository has a Dependabot auto-merge workflow that references the shared reusable workflow",
 		Rationale:   "Without auto-merge configured, Dependabot PRs pile up and require manual merging. The shared reusable workflow ensures consistent auto-merge behaviour across all repos. Repos that implement their own logic drift from the standard and may miss security fixes applied to the central workflow.",
-		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\n\npermissions:\n  pull-requests: write\n  contents: write\n\njobs:\n  dependabot:\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@<commit-sha>\n```\n\nNote: use `pull_request` (not `pull_request_target`) and include the top-level `permissions:` block. Using `pull_request_target` with a reusable workflow call causes `startup_failure` on every non-Dependabot PR. Do not use `secrets: inherit`.",
+		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\n\npermissions:\n  pull-requests: write\n  contents: write\n\njobs:\n  dependabot:\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@<commit-sha>\n    secrets:\n      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}\n      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}\n```\n\nNote: use `pull_request` (not `pull_request_target`) and include the top-level `permissions:` block. Using `pull_request_target` with a reusable workflow call causes `startup_failure` on every non-Dependabot PR. Do not use `secrets: inherit`. The `CODE_REVIEWER_APP_ID` and `CODE_REVIEWER_PRIVATE_KEY` secrets are required so the reusable workflow can generate a GitHub App token — without them it falls back to GITHUB_TOKEN, which suppresses push events and breaks CodeQL required status checks.",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent, RepoTypeScript},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself — it cannot
@@ -105,10 +105,29 @@ func init() {
 				}
 			}
 
+			// The caller must pass CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY
+			// to the reusable workflow. Without them the reusable workflow falls back to
+			// GITHUB_TOKEN, which suppresses push events and breaks CodeQL required status checks.
+			if !strings.Contains(contentStr, "CODE_REVIEWER_APP_ID") {
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Pass:       false,
+					Detail:     fmt.Sprintf("%s is missing CODE_REVIEWER_APP_ID in its secrets block — required to avoid GITHUB_TOKEN fallback which suppresses push events and breaks CodeQL required status checks", foundFilename),
+				}
+			}
+
+			if !strings.Contains(contentStr, "CODE_REVIEWER_PRIVATE_KEY") {
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Pass:       false,
+					Detail:     fmt.Sprintf("%s is missing CODE_REVIEWER_PRIVATE_KEY in its secrets block — required to avoid GITHUB_TOKEN fallback which suppresses push events and breaks CodeQL required status checks", foundFilename),
+				}
+			}
+
 			return ConventionResult{
 				Convention: "dependabot-auto-merge-workflow",
 				Pass:       true,
-				Detail:     fmt.Sprintf("%s references the shared reusable workflow with correct trigger and permissions", foundFilename),
+				Detail:     fmt.Sprintf("%s references the shared reusable workflow with correct trigger, permissions, and app secrets", foundFilename),
 			}
 		},
 	})
