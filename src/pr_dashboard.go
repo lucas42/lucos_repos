@@ -46,14 +46,30 @@ type RepoPRCounts struct {
 
 // PRDashboardData is passed to the HTML template.
 type PRDashboardData struct {
-	Repos       []RepoPRCounts
-	LastFetchAt time.Time
+	Repos               []RepoPRCounts
+	LastFetchAt         time.Time
+	StaleDependabotPRs  []StaleDependabotPR `json:"stale_dependabot_prs,omitempty"`
+}
+
+// staleDependabotThreshold is how long a Dependabot PR must be open before
+// it is considered stale and reported as a health signal failure.
+const staleDependabotThreshold = 48 * time.Hour
+
+// StaleDependabotPR holds minimal info about a stale unmerged Dependabot PR.
+type StaleDependabotPR struct {
+	Repo      string    `json:"repo"`
+	Number    int       `json:"number"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ghPR is a subset of the GitHub pull request API response.
 type ghPR struct {
-	Number int    `json:"number"`
-	State  string `json:"state"`
+	Number    int       `json:"number"`
+	State     string    `json:"state"`
+	CreatedAt time.Time `json:"created_at"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 // ghCombinedStatus is a subset of the GitHub combined status API response.
@@ -143,29 +159,36 @@ func (p *PRSweeper) runSweep() {
 	}
 
 	var results []RepoPRCounts
+	var staleDependabotPRs []StaleDependabotPR
 	for _, repo := range repos {
 		if repo.Archived || repo.Fork {
 			continue
 		}
-		counts := p.fetchRepoPRCounts(token, repo.FullName)
+		counts, stale := p.fetchRepoPRCounts(token, repo.FullName)
 		if counts.Total > 0 {
 			results = append(results, counts)
 		}
+		staleDependabotPRs = append(staleDependabotPRs, stale...)
 	}
 
 	// Sort by total PRs descending.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Total > results[j].Total
 	})
+	// Sort stale Dependabot PRs oldest-first so the oldest is easy to find.
+	sort.Slice(staleDependabotPRs, func(i, j int) bool {
+		return staleDependabotPRs[i].CreatedAt.Before(staleDependabotPRs[j].CreatedAt)
+	})
 
 	p.mu.Lock()
 	p.data = PRDashboardData{
-		Repos:       results,
-		LastFetchAt: time.Now(),
+		Repos:              results,
+		LastFetchAt:        time.Now(),
+		StaleDependabotPRs: staleDependabotPRs,
 	}
 	p.mu.Unlock()
 
-	slog.Info("PR sweep completed", "repos_with_prs", len(results), "duration", time.Since(start))
+	slog.Info("PR sweep completed", "repos_with_prs", len(results), "stale_dependabot_prs", len(staleDependabotPRs), "duration", time.Since(start))
 }
 
 func (p *PRSweeper) fetchAllRepos(token string) ([]gitHubRepo, error) {
@@ -192,8 +215,9 @@ func (p *PRSweeper) fetchAllRepos(token string) ([]gitHubRepo, error) {
 	return allRepos, nil
 }
 
-func (p *PRSweeper) fetchRepoPRCounts(token, repoName string) RepoPRCounts {
+func (p *PRSweeper) fetchRepoPRCounts(token, repoName string) (RepoPRCounts, []StaleDependabotPR) {
 	counts := RepoPRCounts{RepoName: repoName}
+	var stalePRs []StaleDependabotPR
 
 	// Fetch all open PRs with pagination.
 	var prs []ghPR
@@ -204,13 +228,13 @@ func (p *PRSweeper) fetchRepoPRCounts(token, repoName string) RepoPRCounts {
 		body, err := p.githubGet(token, url)
 		if err != nil {
 			slog.Warn("PR sweep: failed to fetch PRs", "repo", repoName, "page", page, "error", err)
-			return counts
+			return counts, stalePRs
 		}
 
 		var pagePRs []ghPR
 		if err := json.Unmarshal(body, &pagePRs); err != nil {
 			slog.Warn("PR sweep: failed to decode PRs", "repo", repoName, "error", err)
-			return counts
+			return counts, stalePRs
 		}
 		prs = append(prs, pagePRs...)
 		if len(pagePRs) < perPage {
@@ -237,9 +261,18 @@ func (p *PRSweeper) fetchRepoPRCounts(token, repoName string) RepoPRCounts {
 		case PRStateFullyApproved:
 			counts.FullyApproved++
 		}
+
+		// Detect stale Dependabot PRs regardless of check/review state.
+		if pr.User.Login == "dependabot[bot]" && time.Since(pr.CreatedAt) > staleDependabotThreshold {
+			stalePRs = append(stalePRs, StaleDependabotPR{
+				Repo:      repoName,
+				Number:    pr.Number,
+				CreatedAt: pr.CreatedAt,
+			})
+		}
 	}
 
-	return counts
+	return counts, stalePRs
 }
 
 func (p *PRSweeper) classifyPR(token, repoName string, prNumber int) PRState {

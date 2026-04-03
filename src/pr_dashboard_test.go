@@ -200,3 +200,105 @@ func TestClassifyPR_FullyApproved(t *testing.T) {
 		t.Errorf("expected PRStateFullyApproved, got %d", state)
 	}
 }
+
+// TestFetchRepoPRCounts_NoStaleDependabot verifies that a fresh Dependabot PR
+// (created less than 48h ago) is not included in the stale list.
+func TestFetchRepoPRCounts_NoStaleDependabot(t *testing.T) {
+	recentTime := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/pulls") && !strings.Contains(r.URL.Path, "/reviews") {
+			// Return one Dependabot PR that is only 24h old.
+			w.Write([]byte(`[{"number":1,"state":"open","created_at":"` + recentTime + `","user":{"login":"dependabot[bot]"}}]`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/status") {
+			w.Write([]byte(`{"state":"pending","statuses":[]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/check-runs") {
+			w.Write([]byte(`{"check_runs":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	counts, stale := p.fetchRepoPRCounts("fake", "lucas42/test_repo")
+	if counts.Total != 1 {
+		t.Errorf("expected 1 total PR, got %d", counts.Total)
+	}
+	if len(stale) != 0 {
+		t.Errorf("expected no stale PRs for a 24h-old Dependabot PR, got %d", len(stale))
+	}
+}
+
+// TestFetchRepoPRCounts_StaleDependabotDetected verifies that a Dependabot PR
+// older than 48h is included in the stale list.
+func TestFetchRepoPRCounts_StaleDependabotDetected(t *testing.T) {
+	staleTime := time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/pulls") && !strings.Contains(r.URL.Path, "/reviews") {
+			// Return one Dependabot PR that is 72h old.
+			w.Write([]byte(`[{"number":7,"state":"open","created_at":"` + staleTime + `","user":{"login":"dependabot[bot]"}}]`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/status") {
+			w.Write([]byte(`{"state":"pending","statuses":[]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/check-runs") {
+			w.Write([]byte(`{"check_runs":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	counts, stale := p.fetchRepoPRCounts("fake", "lucas42/test_repo")
+	if counts.Total != 1 {
+		t.Errorf("expected 1 total PR, got %d", counts.Total)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 stale PR, got %d", len(stale))
+	}
+	if stale[0].Number != 7 {
+		t.Errorf("expected PR #7, got #%d", stale[0].Number)
+	}
+	if stale[0].Repo != "lucas42/test_repo" {
+		t.Errorf("expected repo 'lucas42/test_repo', got %q", stale[0].Repo)
+	}
+}
+
+// TestFetchRepoPRCounts_NonDependabotNotFlagged verifies that a stale non-Dependabot PR
+// is not included in the stale Dependabot list.
+func TestFetchRepoPRCounts_NonDependabotNotFlagged(t *testing.T) {
+	staleTime := time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/pulls") && !strings.Contains(r.URL.Path, "/reviews") {
+			// Return one old PR from a human author.
+			w.Write([]byte(`[{"number":3,"state":"open","created_at":"` + staleTime + `","user":{"login":"lucas42"}}]`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/status") {
+			w.Write([]byte(`{"state":"pending","statuses":[]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/check-runs") {
+			w.Write([]byte(`{"check_runs":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p := &PRSweeper{githubAPIBase: server.URL}
+	_, stale := p.fetchRepoPRCounts("fake", "lucas42/test_repo")
+	if len(stale) != 0 {
+		t.Errorf("expected no stale Dependabot PRs for a non-Dependabot author, got %d", len(stale))
+	}
+}

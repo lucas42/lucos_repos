@@ -163,12 +163,36 @@ func main() {
 			auditCheck.Debug = "Last sweep completed at " + completedAt.UTC().Format(time.RFC3339)
 		}
 
+		// Report stale unmerged Dependabot PRs.
+		prData := prSweeper.Data()
+		staleDependabotCheck := Check{
+			TechDetail: fmt.Sprintf("Checks whether any Dependabot PRs have been open for more than %.0f hours without being merged", staleDependabotThreshold.Hours()),
+		}
+		if prData.LastFetchAt.IsZero() {
+			staleDependabotCheck.OK = true
+			staleDependabotCheck.Debug = "No PR sweep has completed yet"
+		} else if len(prData.StaleDependabotPRs) == 0 {
+			staleDependabotCheck.OK = true
+			staleDependabotCheck.Debug = "No stale Dependabot PRs found"
+		} else {
+			staleDependabotCheck.OK = false
+			oldest := prData.StaleDependabotPRs[0]
+			staleDependabotCheck.Debug = fmt.Sprintf(
+				"%d unmerged Dependabot PR(s) open for more than %.0fh; oldest: %s#%d (open since %s)",
+				len(prData.StaleDependabotPRs),
+				staleDependabotThreshold.Hours(),
+				oldest.Repo, oldest.Number,
+				oldest.CreatedAt.UTC().Format(time.RFC3339),
+			)
+		}
+
 		info := InfoResponse{
 			System: system,
 			Checks: map[string]any{
-				"github-auth":          githubAuthCheck,
-				"database":             dbCheck,
-				"last-audit-completed": auditCheck,
+				"github-auth":            githubAuthCheck,
+				"database":               dbCheck,
+				"last-audit-completed":   auditCheck,
+				"stale-dependabot-prs":   staleDependabotCheck,
 			},
 			Metrics: map[string]any{},
 			CI: map[string]string{
