@@ -735,6 +735,10 @@ func GitHubRepoSecretNames(token, repo string) ([]string, error) {
 
 // GitHubRepoSecretNamesFromBase is the implementation of GitHubRepoSecretNames
 // with an injectable base URL, used by tests to point at a fake server.
+//
+// Note: this fetches only the first page (up to 100 secrets). Pagination is not
+// implemented because lucos repos have far fewer than 100 secrets in practice.
+// If a repo ever exceeds 100 secrets this check would produce a false negative.
 func GitHubRepoSecretNamesFromBase(baseURL, token, repo string) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/actions/secrets?per_page=100", baseURL, repo)
 	req, err := http.NewRequest("GET", url, nil)
