@@ -96,6 +96,20 @@ func (c *GitHubIssueClient) EnsureIssueExists(repo string, conv ConventionInfo) 
 // findOpenIssue fetches open issues with the audit-finding label on the given repo
 // and returns the HTML URL of the first one whose title matches exactly, or "" if none.
 func (c *GitHubIssueClient) findOpenIssue(repo, title string) (string, error) {
+	issue, err := c.findOpenIssueObject(repo, title)
+	if err != nil {
+		return "", err
+	}
+	if issue == nil {
+		return "", nil
+	}
+	return issue.HTMLURL, nil
+}
+
+// findOpenIssueObject fetches open issues with the audit-finding label on the
+// given repo and returns the first gitHubIssue whose title matches exactly,
+// or nil if none. It gives callers access to the issue number for close/comment operations.
+func (c *GitHubIssueClient) findOpenIssueObject(repo, title string) (*gitHubIssue, error) {
 	// Issues List API: fetch all open audit-finding issues, then filter locally for exact title.
 	// per_page=100 is the maximum; pagination is not needed in practice since there should be
 	// at most one open audit-finding issue per convention per repo.
@@ -103,15 +117,15 @@ func (c *GitHubIssueClient) findOpenIssue(repo, title string) (string, error) {
 
 	issues, err := c.fetchIssuesList(listURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to list open issues: %w", err)
+		return nil, fmt.Errorf("failed to list open issues: %w", err)
 	}
 
-	for _, issue := range issues {
+	for i, issue := range issues {
 		if issue.Title == title {
-			return issue.HTMLURL, nil
+			return &issues[i], nil
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 // findMostRecentClosedIssue fetches the most recently updated closed audit-finding
@@ -190,6 +204,116 @@ func (c *GitHubIssueClient) fetchIssuesList(listURL string) ([]gitHubIssue, erro
 	}
 
 	return nil, fmt.Errorf("GitHub issues list API: rate limit retry exhausted")
+}
+
+// CloseIssueIfOpen finds any open audit-finding issue for the given convention
+// on the given repo and closes it with state_reason "completed". If no open
+// issue is found, it is a no-op. A closing comment is posted before closing
+// to explain why the issue was resolved.
+func (c *GitHubIssueClient) CloseIssueIfOpen(repo string, conv ConventionInfo) error {
+	title := conventionIssueTitle(conv.ID, conv.Description)
+
+	issue, err := c.findOpenIssueObject(repo, title)
+	if err != nil {
+		return fmt.Errorf("failed to search for open issue to close: %w", err)
+	}
+	if issue == nil {
+		// No open issue — nothing to do.
+		return nil
+	}
+
+	// Post a comment before closing so there is a visible explanation.
+	comment := fmt.Sprintf("The `%s` convention is now passing for this repository — closing this issue as completed.\n\nThis issue was automatically closed by the lucos_repos audit tool.", conv.ID)
+	if err := c.postIssueComment(repo, issue.Number, comment); err != nil {
+		// Non-fatal: log and continue — closing without a comment is better than not closing.
+		slog.Warn("Failed to post closing comment on audit-finding issue",
+			"repo", repo, "convention", conv.ID, "issue", issue.Number, "error", err)
+	}
+
+	if err := c.closeIssue(repo, issue.Number); err != nil {
+		return fmt.Errorf("failed to close audit-finding issue #%d: %w", issue.Number, err)
+	}
+
+	slog.Info("Closed audit-finding issue", "repo", repo, "convention", conv.ID, "issue", issue.Number)
+	return nil
+}
+
+// postIssueComment posts a comment on the given issue.
+func (c *GitHubIssueClient) postIssueComment(repo string, issueNumber int, body string) error {
+	payload := map[string]string{"body": body}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal comment payload: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/issues/%d/comments", c.baseURL, repo, issueNumber)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(payloadJSON))
+	if err != nil {
+		return fmt.Errorf("failed to build comment request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("GitHub post comment request failed: %w", err)
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read post comment response: %w", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("GitHub post comment API returned %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
+}
+
+// closeIssueRequest is the JSON body for closing a GitHub issue.
+type closeIssueRequest struct {
+	State       string `json:"state"`
+	StateReason string `json:"state_reason"`
+}
+
+// closeIssue closes the given issue with state_reason "completed".
+func (c *GitHubIssueClient) closeIssue(repo string, issueNumber int) error {
+	payload := closeIssueRequest{
+		State:       "closed",
+		StateReason: "completed",
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal close payload: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/issues/%d", c.baseURL, repo, issueNumber)
+	req, err := http.NewRequest("PATCH", url, bytes.NewReader(payloadJSON))
+	if err != nil {
+		return fmt.Errorf("failed to build close issue request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("GitHub close issue request failed: %w", err)
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read close issue response: %w", err)
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusGone {
+		return fmt.Errorf("GitHub close issue API returned %d (issues unavailable): %s: %w", resp.StatusCode, respBody, ErrIssuesUnavailable)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GitHub close issue API returned %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
 }
 
 // createIssueRequest is the JSON body for creating a GitHub issue.

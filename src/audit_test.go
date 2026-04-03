@@ -807,10 +807,15 @@ func TestSweep_ConventionAPIErrorSkipsIssueCreation(t *testing.T) {
 			// protection check (e.g. .circleci/config.yml, branches/main/protection).
 			w.WriteHeader(http.StatusInternalServerError)
 		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_transient/issues"):
-			// This endpoint must NOT be called — a transient error is not a convention failure.
-			issueCreated = true
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"number": 1, "html_url": "https://github.com/lucas42/lucos_transient/issues/1"})
+			if r.Method == http.MethodPost && r.URL.Path == "/repos/lucas42/lucos_transient/issues" {
+				// Issue creation must NOT be called — a transient error is not a convention failure.
+				issueCreated = true
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(map[string]any{"number": 1, "html_url": "https://github.com/lucas42/lucos_transient/issues/1"})
+			} else {
+				// GET (list for close) and PATCH (close) are fine — return empty list so no issue is closed.
+				json.NewEncoder(w).Encode([]gitHubIssue{})
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -840,7 +845,7 @@ func TestSweep_ConventionAPIErrorSkipsIssueCreation(t *testing.T) {
 		t.Error("expected sweep() to return an error (incomplete) when convention checks fail due to API errors, got nil")
 	}
 	if issueCreated {
-		t.Error("expected no issue to be created for a transient API error, but issue endpoint was called")
+		t.Error("expected no issue to be created for a transient API error, but issue creation endpoint was called")
 	}
 }
 

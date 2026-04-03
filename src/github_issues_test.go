@@ -483,3 +483,126 @@ func TestEnsureIssueExists_CreateReturns403(t *testing.T) {
 		t.Errorf("expected ErrIssuesUnavailable, got: %v", err)
 	}
 }
+
+// TestCloseIssueIfOpen_NoOpenIssue verifies that when there is no open
+// audit-finding issue for the convention, CloseIssueIfOpen is a no-op.
+func TestCloseIssueIfOpen_NoOpenIssue(t *testing.T) {
+	closeCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues"):
+			// No open issues.
+			w.Write(buildIssuesList([]gitHubIssue{}))
+		case r.Method == http.MethodPatch:
+			closeCalled = true
+			w.Write([]byte(`{"number":1,"state":"closed"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	err := client.CloseIssueIfOpen("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if closeCalled {
+		t.Error("expected close endpoint not to be called when no open issue exists")
+	}
+}
+
+// TestCloseIssueIfOpen_ClosesOpenIssue verifies that when an open audit-finding
+// issue exists for the convention, CloseIssueIfOpen posts a comment and closes it.
+func TestCloseIssueIfOpen_ClosesOpenIssue(t *testing.T) {
+	commentPosted := false
+	issueClosed := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues"):
+			// One open audit-finding issue with matching title.
+			title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
+			w.Write(buildIssuesList([]gitHubIssue{
+				{Number: 42, HTMLURL: "https://github.com/lucas42/test_repo/issues/42", Title: title, State: "open"},
+			}))
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/comments"):
+			commentPosted = true
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":1}`))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/42"):
+			issueClosed = true
+			w.Write([]byte(`{"number":42,"state":"closed"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	err := client.CloseIssueIfOpen("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !commentPosted {
+		t.Error("expected a closing comment to be posted before closing")
+	}
+	if !issueClosed {
+		t.Error("expected issue to be closed")
+	}
+}
+
+// TestCloseIssueIfOpen_IssuesUnavailable verifies that when the issues API
+// returns 410, CloseIssueIfOpen returns ErrIssuesUnavailable.
+func TestCloseIssueIfOpen_IssuesUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte(`{"message":"Issues has been disabled."}`))
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	err := client.CloseIssueIfOpen("lucas42/no_issues_repo", conv)
+	if err == nil {
+		t.Fatal("expected error for unavailable issues, got nil")
+	}
+	if !isIssuesUnavailableErr(err) {
+		t.Errorf("expected ErrIssuesUnavailable, got: %v", err)
+	}
+}
+
+// TestCloseIssueIfOpen_CloseAPIError verifies that when the close PATCH returns
+// an unexpected error, CloseIssueIfOpen propagates that error.
+func TestCloseIssueIfOpen_CloseAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues"):
+			title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
+			w.Write(buildIssuesList([]gitHubIssue{
+				{Number: 5, HTMLURL: "https://github.com/lucas42/test_repo/issues/5", Title: title, State: "open"},
+			}))
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":1}`))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/5"):
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message":"server error"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	err := client.CloseIssueIfOpen("lucas42/test_repo", conv)
+	if err == nil {
+		t.Fatal("expected error when close API fails, got nil")
+	}
+}
