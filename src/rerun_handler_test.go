@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,12 +20,6 @@ func fakeGitHubAuth(t *testing.T) *GitHubAuthClient {
 	}
 }
 
-// encodeFileContent returns a GitHub Contents API response with the given
-// content base64-encoded, suitable for use in fake GitHub API servers.
-func encodeFileContent(content string) string {
-	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-	return `{"content":"` + encoded + `","encoding":"base64"}`
-}
 
 func TestRerunHandler_MissingParams(t *testing.T) {
 	db := openTestDB(t)
