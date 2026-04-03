@@ -274,16 +274,17 @@ func (s *AuditSweeper) sweep() error {
 				continue
 			}
 
+			convInfo := ConventionInfo{
+				ID:          convention.ID,
+				Description: convention.Description,
+				Rationale:   convention.Rationale,
+				Guidance:    convention.Guidance,
+				Detail:      result.Detail,
+			}
+
 			issueURL := ""
 			if !result.Pass {
 				// Ensure an open audit-finding issue exists for this violation.
-				convInfo := ConventionInfo{
-					ID:          convention.ID,
-					Description: convention.Description,
-					Rationale:   convention.Rationale,
-					Guidance:    convention.Guidance,
-					Detail:      result.Detail,
-				}
 				if os.Getenv("ENVIRONMENT") == "production" {
 					var issueErr error
 					issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
@@ -301,6 +302,24 @@ func (s *AuditSweeper) sweep() error {
 					}
 				} else {
 					slog.Info("Skipping issue creation in non-production environment",
+						"repo", repoName, "convention", convention.ID)
+				}
+			} else {
+				// Convention passes — close any open audit-finding issue.
+				if os.Getenv("ENVIRONMENT") == "production" {
+					if closeErr := issueClient.CloseIssueIfOpen(repoName, convInfo); closeErr != nil {
+						if isIssuesUnavailableErr(closeErr) {
+							slog.Warn("Issues unavailable for repo, skipping issue close",
+								"repo", repoName, "convention", convention.ID, "error", closeErr)
+						} else {
+							// Close failure does not invalidate the sweep result — the
+							// convention check succeeded. Log and continue.
+							slog.Warn("Failed to close audit-finding issue for passing convention",
+								"repo", repoName, "convention", convention.ID, "error", closeErr)
+						}
+					}
+				} else {
+					slog.Debug("Skipping issue close in non-production environment",
 						"repo", repoName, "convention", convention.ID)
 				}
 			}
