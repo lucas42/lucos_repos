@@ -123,6 +123,7 @@ func BuildDashboardData(report StatusReport) DashboardData {
 // jsonCheckResult is a single check entry in the JSON API response.
 type jsonCheckResult struct {
 	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
 	Issue  string `json:"issue,omitempty"`
 }
 
@@ -150,6 +151,7 @@ func buildJSONResponse(data DashboardData) []jsonRepoResult {
 				cr.Status = "fail"
 				cr.Issue = cell.IssueURL
 			}
+			cr.Detail = cell.Detail
 			checks[conv] = cr
 		}
 		results = append(results, jsonRepoResult{
