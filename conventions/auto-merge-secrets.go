@@ -53,26 +53,55 @@ func init() {
 			hasAppID := strings.Contains(contentStr, "secrets.CODE_REVIEWER_APP_ID")
 			hasPrivateKey := strings.Contains(contentStr, "secrets.CODE_REVIEWER_PRIVATE_KEY")
 
-			if hasAppID && hasPrivateKey {
+			var missingFromFile []string
+			if !hasAppID {
+				missingFromFile = append(missingFromFile, "CODE_REVIEWER_APP_ID")
+			}
+			if !hasPrivateKey {
+				missingFromFile = append(missingFromFile, "CODE_REVIEWER_PRIVATE_KEY")
+			}
+			if len(missingFromFile) > 0 {
 				return ConventionResult{
 					Convention: "auto-merge-secrets",
-					Pass:       true,
-					Detail:     "code-reviewer-auto-merge.yml passes CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY to the reusable workflow",
+					Pass:       false,
+					Detail:     fmt.Sprintf("code-reviewer-auto-merge.yml does not pass secret(s) to the reusable workflow: %v", missingFromFile),
 				}
 			}
 
-			var missing []string
-			if !hasAppID {
-				missing = append(missing, "CODE_REVIEWER_APP_ID")
+			// The workflow file references both secrets — verify they're actually
+			// configured on the repo. Without them, the reusable workflow falls back
+			// to GITHUB_TOKEN, which suppresses push events and breaks CodeQL checks.
+			secretNames, err := GitHubRepoSecretNamesFromBase(base, repo.GitHubToken, repo.Name)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "auto-merge-secrets", "repo", repo.Name, "step", "fetch-secrets", "error", err)
+				return ConventionResult{
+					Convention: "auto-merge-secrets",
+					Err:        fmt.Errorf("error fetching repo secrets: %w", err),
+				}
 			}
-			if !hasPrivateKey {
-				missing = append(missing, "CODE_REVIEWER_PRIVATE_KEY")
+			secretSet := make(map[string]bool, len(secretNames))
+			for _, name := range secretNames {
+				secretSet[name] = true
+			}
+			var missingFromRepo []string
+			if !secretSet["CODE_REVIEWER_APP_ID"] {
+				missingFromRepo = append(missingFromRepo, "CODE_REVIEWER_APP_ID")
+			}
+			if !secretSet["CODE_REVIEWER_PRIVATE_KEY"] {
+				missingFromRepo = append(missingFromRepo, "CODE_REVIEWER_PRIVATE_KEY")
+			}
+			if len(missingFromRepo) > 0 {
+				return ConventionResult{
+					Convention: "auto-merge-secrets",
+					Pass:       false,
+					Detail:     fmt.Sprintf("%v referenced in code-reviewer-auto-merge.yml but not configured as Actions secrets on this repo — ask lucos-system-administrator to add them", missingFromRepo),
+				}
 			}
 
 			return ConventionResult{
 				Convention: "auto-merge-secrets",
-				Pass:       false,
-				Detail:     fmt.Sprintf("code-reviewer-auto-merge.yml does not pass secret(s) to the reusable workflow: %v", missing),
+				Pass:       true,
+				Detail:     "code-reviewer-auto-merge.yml passes CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY to the reusable workflow",
 			}
 		},
 	})

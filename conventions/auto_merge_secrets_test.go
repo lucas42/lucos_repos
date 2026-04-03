@@ -51,12 +51,16 @@ jobs:
 `
 
 // TestAutoMergeSecrets_BothSecretsPresent verifies that a workflow that passes
-// both secrets to the reusable workflow passes.
+// both secrets to the reusable workflow, with secrets configured on the repo, passes.
 func TestAutoMergeSecrets_BothSecretsPresent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(validCodeReviewerWithSecrets)))
+			return
+		}
+		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
+			w.Write([]byte(repoSecretsJSON))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -73,6 +77,65 @@ func TestAutoMergeSecrets_BothSecretsPresent(t *testing.T) {
 	result := findConvention(t, "auto-merge-secrets").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected Pass=true, got Detail=%q", result.Detail)
+	}
+}
+
+// TestAutoMergeSecrets_SecretsNotConfiguredOnRepo verifies that a workflow that
+// references the secrets but the secrets aren't configured on the repo fails.
+func TestAutoMergeSecrets_SecretsNotConfiguredOnRepo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(validCodeReviewerWithSecrets)))
+			return
+		}
+		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
+			w.Write([]byte(repoSecretsEmptyJSON))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "auto-merge-secrets").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false when secrets not configured on repo, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+}
+
+// TestAutoMergeSecrets_SecretsAPIError verifies that a secrets API error sets Err.
+func TestAutoMergeSecrets_SecretsAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(validCodeReviewerWithSecrets)))
+			return
+		}
+		// secrets API returns 500
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "auto-merge-secrets").Check(repo)
+	if result.Err == nil {
+		t.Errorf("expected Err!=nil for secrets API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
 	}
 }
 

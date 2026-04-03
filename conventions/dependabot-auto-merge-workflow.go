@@ -124,6 +124,36 @@ func init() {
 				}
 			}
 
+			// The workflow references both secrets — verify they're actually
+			// configured on the repo. Without them, the reusable workflow falls back
+			// to GITHUB_TOKEN, which suppresses push events and breaks CodeQL checks.
+			secretNames, err := GitHubRepoSecretNamesFromBase(base, repo.GitHubToken, repo.Name)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-secrets", "error", err)
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Err:        fmt.Errorf("error fetching repo secrets: %w", err),
+				}
+			}
+			secretSet := make(map[string]bool, len(secretNames))
+			for _, name := range secretNames {
+				secretSet[name] = true
+			}
+			var missingSecrets []string
+			if !secretSet["CODE_REVIEWER_APP_ID"] {
+				missingSecrets = append(missingSecrets, "CODE_REVIEWER_APP_ID")
+			}
+			if !secretSet["CODE_REVIEWER_PRIVATE_KEY"] {
+				missingSecrets = append(missingSecrets, "CODE_REVIEWER_PRIVATE_KEY")
+			}
+			if len(missingSecrets) > 0 {
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Pass:       false,
+					Detail:     fmt.Sprintf("%v referenced in %s but not configured as Actions secrets on this repo — ask lucos-system-administrator to add them", missingSecrets, foundFilename),
+				}
+			}
+
 			return ConventionResult{
 				Convention: "dependabot-auto-merge-workflow",
 				Pass:       true,

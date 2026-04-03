@@ -717,6 +717,61 @@ func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, er
 	return nil, nil
 }
 
+// gitHubSecretsResponse is the response from the GitHub Actions secrets API.
+type gitHubSecretsResponse struct {
+	TotalCount int `json:"total_count"`
+	Secrets    []struct {
+		Name string `json:"name"`
+	} `json:"secrets"`
+}
+
+// GitHubRepoSecretNames returns the names of all Actions secrets configured on
+// the given repository. It uses the GitHub Actions secrets API, which returns
+// secret names but not their values. Returns an empty slice (not an error) if
+// the repo has no secrets.
+func GitHubRepoSecretNames(token, repo string) ([]string, error) {
+	return GitHubRepoSecretNamesFromBase(GitHubBaseURL, token, repo)
+}
+
+// GitHubRepoSecretNamesFromBase is the implementation of GitHubRepoSecretNames
+// with an injectable base URL, used by tests to point at a fake server.
+func GitHubRepoSecretNamesFromBase(baseURL, token, repo string) ([]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/actions/secrets?per_page=100", baseURL, repo)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var secrets gitHubSecretsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&secrets); err != nil {
+			return nil, fmt.Errorf("failed to decode secrets response for %s: %w", repo, err)
+		}
+		names := make([]string, 0, len(secrets.Secrets))
+		for _, s := range secrets.Secrets {
+			names = append(names, s.Name)
+		}
+		return names, nil
+	case http.StatusNotFound:
+		return []string{}, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching secrets for %s", resp.StatusCode, repo)
+	}
+}
+
 // codeQLSupportedLanguages is the set of languages that CodeQL can analyse.
 // Language names match what the GitHub Languages API returns (title case).
 var codeQLSupportedLanguages = map[string]bool{
