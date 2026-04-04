@@ -8,7 +8,7 @@ import (
 
 // codeReviewerAutoMergeReusableWorkflow is the reusable workflow reference that
 // the code-reviewer auto-merge workflow must delegate to.
-const codeReviewerAutoMergeReusableWorkflow = "lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml"
+const codeReviewerAutoMergeReusableWorkflow = "lucas42/.github/.github/workflows/reusable-code-reviewer-auto-merge.yml"
 
 // codeReviewerAutoMergePermissionsBlock is the permissions block the caller
 // workflow must declare. The reusable workflow uses its own GitHub App token

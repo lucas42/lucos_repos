@@ -8,7 +8,7 @@ import (
 
 // dependabotAutoMergeReusableWorkflow is the reusable workflow reference that
 // the auto-merge workflow must delegate to.
-const dependabotAutoMergeReusableWorkflow = "lucas42/.github/.github/workflows/dependabot-auto-merge.yml"
+const dependabotAutoMergeReusableWorkflow = "lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml"
 
 func init() {
 	// dependabot-auto-merge-workflow: system, component, and script repos must have a
