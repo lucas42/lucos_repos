@@ -478,3 +478,174 @@ func codeqlServerWithLanguages(t *testing.T, workflowContent string, languages m
 		}
 	}))
 }
+
+// codeqlServerFull creates a test server serving the languages endpoint,
+// the codeql-analysis.yml file, and the branch protection endpoint.
+// Used for Check 5 (language matrix consistency) tests.
+func codeqlServerFull(t *testing.T, workflowContent string, languages map[string]int, protectionBody []byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_test/languages":
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(languages)
+		case "/repos/lucas42/lucos_test/contents/.github/workflows/codeql-analysis.yml":
+			w.WriteHeader(http.StatusOK)
+			w.Write(composeFixture(workflowContent))
+		case "/repos/lucas42/lucos_test/branches/main/protection":
+			if protectionBody != nil {
+				w.WriteHeader(http.StatusOK)
+				w.Write(protectionBody)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"Branch not protected"}`))
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// --- codeql-workflow-security-settings Check 5 (language matrix) tests ---
+
+// workflowWithMatrix returns a minimal valid CodeQL workflow YAML with the
+// given languages in the analyze job's strategy.matrix.language list.
+func workflowWithMatrix(languages []string) string {
+	langList := ""
+	for _, l := range languages {
+		langList += "\n        - " + l
+	}
+	return `name: CodeQL Analysis
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions: {}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language:` + langList + `
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+`
+}
+
+// workflowWithoutMatrix returns a minimal valid CodeQL workflow YAML with
+// no explicit language matrix (relies on auto-detection).
+func workflowWithoutMatrix() string {
+	return `name: CodeQL Analysis
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions: {}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+`
+}
+
+func TestCodeQLSecuritySettings_ExplicitMatrixCoversRequiredAnalyzeCheck(t *testing.T) {
+	// Analyze (javascript) is required; workflow has explicit matrix with javascript — pass.
+	server := codeqlServerFull(t,
+		workflowWithMatrix([]string{"javascript"}),
+		map[string]int{"JavaScript": 1000},
+		branchProtectionFixture([]string{"Analyze (javascript)"}),
+	)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-workflow-security-settings").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when explicit matrix covers required Analyze check, got fail: %s", result.Detail)
+	}
+}
+
+func TestCodeQLSecuritySettings_MissingMatrixForRequiredAnalyzeCheck(t *testing.T) {
+	// Analyze (javascript) is required; workflow has no explicit matrix — fail.
+	server := codeqlServerFull(t,
+		workflowWithoutMatrix(),
+		map[string]int{"JavaScript": 1000},
+		branchProtectionFixture([]string{"Analyze (javascript)"}),
+	)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-workflow-security-settings").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail when required Analyze check not covered by explicit matrix, got pass")
+	}
+	if !strings.Contains(result.Detail, "javascript") {
+		t.Errorf("expected detail to mention the missing language, got: %s", result.Detail)
+	}
+}
+
+func TestCodeQLSecuritySettings_MatrixMissingOneOfTwoRequiredAnalyzeChecks(t *testing.T) {
+	// Analyze (javascript) and Analyze (python) required; matrix only has javascript — fail for python.
+	server := codeqlServerFull(t,
+		workflowWithMatrix([]string{"javascript"}),
+		map[string]int{"JavaScript": 600, "Python": 400},
+		branchProtectionFixture([]string{"Analyze (javascript)", "Analyze (python)"}),
+	)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-workflow-security-settings").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail when matrix misses a required Analyze language, got pass")
+	}
+	if !strings.Contains(result.Detail, "python") {
+		t.Errorf("expected detail to mention missing language, got: %s", result.Detail)
+	}
+}
+
+func TestCodeQLSecuritySettings_NoAnalyzeChecksRequired(t *testing.T) {
+	// No Analyze (X) checks in branch protection — language matrix check skipped, pass.
+	server := codeqlServerFull(t,
+		workflowWithoutMatrix(),
+		map[string]int{"JavaScript": 1000},
+		branchProtectionFixture([]string{"ci/circleci: test"}),
+	)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-workflow-security-settings").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when no Analyze checks required, got fail: %s", result.Detail)
+	}
+}
+
+func TestCodeQLSecuritySettings_BranchProtectionUnset_LanguageMatrixCheckSkipped(t *testing.T) {
+	// Branch protection endpoint returns 404 (not protected) — language matrix check skipped, pass.
+	server := codeqlServerFull(t,
+		workflowWithoutMatrix(),
+		map[string]int{"JavaScript": 1000},
+		nil, // no protection
+	)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "codeql-workflow-security-settings").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when branch protection not set (language matrix check skipped), got fail: %s", result.Detail)
+	}
+}

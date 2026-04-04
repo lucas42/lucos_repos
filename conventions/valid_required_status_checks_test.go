@@ -180,34 +180,6 @@ func TestValidRequiredStatusChecks_NoReportedChecks(t *testing.T) {
 	}
 }
 
-func TestValidRequiredStatusChecks_PushOnlyCheck(t *testing.T) {
-	// Required: "ci/circleci: test" and "Analyze (actions)"
-	// Main reports both (circleci via status, Analyze via check run).
-	// PR reports circleci (via status) but NOT "Analyze (actions)".
-	// "Analyze (actions)" is push-only — present on main but absent from PR.
-	server := validChecksServerFull(t, validChecksServerOpts{
-		protectionBody:   branchProtectionFixture([]string{"ci/circleci: test", "Analyze (actions)"}),
-		statusContexts:   []string{"ci/circleci: test"},
-		checkRunNames:    []string{"Analyze (actions)"},
-		prSHA:            "abc123",
-		prCheckRunNames:  nil,
-		prStatusContexts: []string{"ci/circleci: test"},
-	})
-	defer server.Close()
-
-	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
-	result := findConvention(t, "valid-required-status-checks").Check(repo)
-	if result.Pass {
-		t.Errorf("expected fail for push-only check, got pass: %s", result.Detail)
-	}
-	if !strings.Contains(result.Detail, "Analyze (actions)") {
-		t.Errorf("expected Detail to mention push-only check name, got: %s", result.Detail)
-	}
-	if !strings.Contains(result.Detail, "push-only") {
-		t.Errorf("expected Detail to mention 'push-only', got: %s", result.Detail)
-	}
-}
-
 func TestValidRequiredStatusChecks_AllChecksOnPR(t *testing.T) {
 	// All required checks appear on both main and the PR — should pass.
 	// circleci reports via status API, CodeQL via check runs — both sources.
@@ -228,23 +200,19 @@ func TestValidRequiredStatusChecks_AllChecksOnPR(t *testing.T) {
 	}
 }
 
-func TestValidRequiredStatusChecks_NoPRAvailable(t *testing.T) {
-	// All required checks match on main, but no PR exists to sample.
+func TestValidRequiredStatusChecks_AllChecksMatchOnMain(t *testing.T) {
+	// All required checks match on HEAD of main — should pass.
 	server := validChecksServerFull(t, validChecksServerOpts{
 		protectionBody: branchProtectionFixture([]string{"ci/circleci: test"}),
 		statusContexts: []string{"ci/circleci: test"},
 		checkRunNames:  nil,
-		// no prSHA — PR list returns empty
 	})
 	defer server.Close()
 
 	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
 	result := findConvention(t, "valid-required-status-checks").Check(repo)
 	if !result.Pass {
-		t.Errorf("expected pass when no PR available, got: %s", result.Detail)
-	}
-	if !strings.Contains(result.Detail, "no recent PR") {
-		t.Errorf("expected Detail to mention no recent PR, got: %s", result.Detail)
+		t.Errorf("expected pass when all checks match on main, got: %s", result.Detail)
 	}
 }
 
