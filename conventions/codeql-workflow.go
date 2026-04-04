@@ -3,6 +3,8 @@ package conventions
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -73,18 +75,21 @@ func init() {
 	// contain the required security-relevant settings.
 	Register(Convention{
 		ID:          "codeql-workflow-security-settings",
-		Description: "codeql-analysis.yml has required security settings: pull_request trigger, schedule trigger, top-level permissions, and security-events: write on analyze job",
+		Description: "codeql-analysis.yml has required security settings: pull_request trigger, schedule trigger, top-level permissions, security-events: write on analyze job, and explicit language matrix matching required Analyze checks",
 		Rationale: "A CodeQL workflow that only runs on push misses vulnerabilities introduced " +
 			"in PRs. A schedule trigger catches new vulnerabilities in unchanged code. A " +
 			"top-level permissions block restricts the default token scope. And " +
 			"`security-events: write` on the analyze job is required for CodeQL to upload " +
-			"its findings to GitHub.",
+			"its findings to GitHub. An explicit language matrix ensures CodeQL runs for all " +
+			"required languages on every PR — auto-detected languages may be skipped on PRs " +
+			"that don't touch files in that language, silently blocking merges.",
 		Guidance: "Ensure your `codeql-analysis.yml` includes:\n\n" +
 			"1. A `pull_request:` entry in the `on:` block\n" +
 			"2. A `schedule:` entry with a `cron` value in the `on:` block\n" +
 			"3. A top-level `permissions:` key in the workflow\n" +
-			"4. `security-events: write` in the analyze job's `permissions` block\n\n" +
-			"Example:\n```yaml\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 1'\n\npermissions: {}\n\njobs:\n  analyze:\n    permissions:\n      security-events: write\n```",
+			"4. `security-events: write` in the analyze job's `permissions` block\n" +
+			"5. An explicit `strategy.matrix.language` list covering all languages in required `Analyze (X)` status checks\n\n" +
+			"Example:\n```yaml\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 1'\n\npermissions: {}\n\njobs:\n  analyze:\n    strategy:\n      matrix:\n        language: [javascript]\n    permissions:\n      security-events: write\n```",
 		AppliesTo: []RepoType{RepoTypeSystem, RepoTypeComponent},
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
@@ -157,6 +162,36 @@ func init() {
 			// Check 4: security-events: write on analyze job
 			if !workflow.hasSecurityEventsWrite() {
 				issues = append(issues, "missing security-events: write in analyze job permissions")
+			}
+
+			// Check 5: explicit language matrix covers all required Analyze (X) checks.
+			// If a language is required in branch protection but absent from the explicit
+			// matrix, CodeQL may skip it on PRs that don't touch files in that language,
+			// silently blocking merges.
+			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main")
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-required-checks", "error", err)
+				// Non-fatal: skip language matrix check if we can't fetch branch protection.
+			} else {
+				explicitLangs := workflow.explicitLanguages()
+				explicitSet := make(map[string]bool, len(explicitLangs))
+				for _, l := range explicitLangs {
+					explicitSet[l] = true
+				}
+				var missingLangs []string
+				for _, check := range requiredChecks {
+					m := analyzeLanguageRe.FindStringSubmatch(check)
+					if m == nil {
+						continue
+					}
+					lang := m[1]
+					if !explicitSet[lang] {
+						missingLangs = append(missingLangs, lang)
+					}
+				}
+				if len(missingLangs) > 0 {
+					issues = append(issues, fmt.Sprintf("required Analyze (%s) check(s) not covered by explicit strategy.matrix.language — auto-detected languages may be skipped on PRs that don't touch those files, silently blocking merges", strings.Join(missingLangs, ", ")))
+				}
 			}
 
 			if len(issues) == 0 {
@@ -257,6 +292,17 @@ func (o *codeqlWorkflowOn) hasSchedule() bool {
 // codeqlWorkflowJob represents a single job in the workflow.
 type codeqlWorkflowJob struct {
 	Permissions map[string]string `yaml:"permissions"`
+	Strategy    codeqlJobStrategy `yaml:"strategy"`
+}
+
+// codeqlJobStrategy represents the strategy block of a workflow job.
+type codeqlJobStrategy struct {
+	Matrix codeqlJobMatrix `yaml:"matrix"`
+}
+
+// codeqlJobMatrix represents the matrix block of a job strategy.
+type codeqlJobMatrix struct {
+	Language []string `yaml:"language"`
 }
 
 // hasSecurityEventsWrite checks whether any job named "analyze" (case-insensitive
@@ -272,3 +318,23 @@ func (w *codeqlWorkflow) hasSecurityEventsWrite() bool {
 	}
 	return false
 }
+
+// explicitLanguages returns all language values declared across all jobs'
+// strategy.matrix.language lists, deduplicated.
+func (w *codeqlWorkflow) explicitLanguages() []string {
+	seen := make(map[string]bool)
+	var langs []string
+	for _, job := range w.Jobs {
+		for _, lang := range job.Strategy.Matrix.Language {
+			if !seen[lang] {
+				seen[lang] = true
+				langs = append(langs, lang)
+			}
+		}
+	}
+	return langs
+}
+
+// analyzeLanguageRe matches required status check names of the form "Analyze (X)"
+// and captures the language name X.
+var analyzeLanguageRe = regexp.MustCompile(`^Analyze \(([^)]+)\)$`)
