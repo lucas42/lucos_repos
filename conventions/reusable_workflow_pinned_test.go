@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   reusable:
-    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@fa6177c065517f4c8cb8938730c3bc27ff5c2f0d
+    uses: lucas42/.github/.github/workflows/reusable-code-reviewer-auto-merge.yml@fa6177c065517f4c8cb8938730c3bc27ff5c2f0d
     secrets:
       CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
       CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
@@ -54,7 +54,7 @@ permissions:
 
 jobs:
   reusable:
-    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-code-reviewer-auto-merge.yml@main
     secrets:
       CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
       CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
@@ -72,7 +72,7 @@ permissions:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@fa6177c065517f4c8cb8938730c3bc27ff5c2f0d
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@fa6177c065517f4c8cb8938730c3bc27ff5c2f0d
 `
 
 const unpinnedDependabotYAML = `name: Dependabot auto-merge
@@ -87,7 +87,7 @@ permissions:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
 `
 
 const noReusableWorkflowYAML = `name: CI
@@ -113,7 +113,7 @@ permissions:
 
 jobs:
   reusable:
-    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@v1
+    uses: lucas42/.github/.github/workflows/reusable-code-reviewer-auto-merge.yml@v1
 `
 
 // TestReusableWorkflowPinnedToSHA_AllPinned verifies that a repo with all
@@ -144,7 +144,7 @@ func TestReusableWorkflowPinnedToSHA_AllPinned(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected Pass=true, got Detail=%q", result.Detail)
 	}
@@ -178,7 +178,7 @@ func TestReusableWorkflowPinnedToSHA_UnpinnedCodeReviewer(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if result.Pass {
 		t.Errorf("expected Pass=false for unpinned @main reference, got Detail=%q", result.Detail)
 	}
@@ -209,14 +209,58 @@ func TestReusableWorkflowPinnedToSHA_UnpinnedDependabot(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if result.Pass {
 		t.Errorf("expected Pass=false for unpinned dependabot @main, got Detail=%q", result.Detail)
 	}
 }
 
-// TestReusableWorkflowPinnedToSHA_TagRef verifies that a tag reference like
-// @v1 also fails — only full SHAs are accepted.
+// semverTagRefYAML uses a full three-part semver tag — should pass.
+const semverTagRefYAML = `name: Auto-merge
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+jobs:
+  reusable:
+    uses: lucas42/.github/.github/workflows/reusable-code-reviewer-auto-merge.yml@v1.0.0
+`
+
+// TestReusableWorkflowPinned_SemverTag verifies that a three-part semver tag
+// like @v1.0.0 passes — it is an accepted pinning strategy.
+func TestReusableWorkflowPinned_SemverTag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/contents/.github/workflows":
+			w.Write([]byte(encodeDirListing([]string{"code-reviewer-auto-merge.yml"})))
+		case "/repos/lucas42/test_repo/contents/.github/workflows/code-reviewer-auto-merge.yml":
+			w.Write([]byte(encodeWorkflowContent(semverTagRefYAML)))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true for semver tag @v1.0.0, got Detail=%q", result.Detail)
+	}
+}
+
+// TestReusableWorkflowPinnedToSHA_TagRef verifies that a short tag like @v1
+// fails — only full SHAs or three-part semver tags (e.g. @v1.0.0) are accepted.
 func TestReusableWorkflowPinnedToSHA_TagRef(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -238,7 +282,7 @@ func TestReusableWorkflowPinnedToSHA_TagRef(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if result.Pass {
 		t.Errorf("expected Pass=false for tag @v1 reference, got Detail=%q", result.Detail)
 	}
@@ -267,7 +311,7 @@ func TestReusableWorkflowPinnedToSHA_NoReusableRefs(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected Pass=true for workflow with no reusable refs, got Detail=%q", result.Detail)
 	}
@@ -288,7 +332,7 @@ func TestReusableWorkflowPinnedToSHA_NoWorkflowsDir(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected Pass=true for repo without workflows dir, got Detail=%q", result.Detail)
 	}
@@ -317,7 +361,7 @@ func TestReusableWorkflowPinnedToSHA_ScriptRepo(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if result.Pass {
 		t.Errorf("expected Pass=false for script repo with unpinned ref, got Detail=%q", result.Detail)
 	}
@@ -337,7 +381,7 @@ func TestReusableWorkflowPinnedToSHA_APIError(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if result.Err == nil {
 		t.Errorf("expected Err!=nil for API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
 	}
@@ -369,7 +413,7 @@ func TestReusableWorkflowPinnedToSHA_FileFetchError(t *testing.T) {
 		GitHubBaseURL: server.URL,
 	}
 
-	result := findConvention(t, "reusable-workflow-pinned-to-sha").Check(repo)
+	result := findConvention(t, "reusable-workflow-pinned").Check(repo)
 	if result.Err == nil {
 		t.Errorf("expected Err!=nil for file-fetch error, got Pass=%v Detail=%q", result.Pass, result.Detail)
 	}

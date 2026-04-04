@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
     secrets:
       CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
       CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
@@ -37,7 +37,7 @@ on:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
     secrets: inherit
 `
 
@@ -49,7 +49,7 @@ on:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
 `
 
 const invalidDependabotAutoMergeYAML = `name: Dependabot auto-merge
@@ -289,7 +289,7 @@ permissions:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
     secrets: inherit
 `
 
@@ -334,7 +334,7 @@ permissions:
 
 jobs:
   dependabot:
-    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
 `
 
 // TestDependabotAutoMergeWorkflow_MissingSecrets verifies that a workflow missing
