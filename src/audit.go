@@ -107,11 +107,11 @@ func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient, system string) *Audit
 // sweepInterval. It is safe to call only once.
 func (s *AuditSweeper) Start() {
 	go func() {
-		s.runSweep()
+		s.TriggerSweep()
 		ticker := time.NewTicker(s.sweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			s.runSweep()
+			s.TriggerSweep()
 		}
 	}()
 }
@@ -140,10 +140,6 @@ func (s *AuditSweeper) TriggerSweep() bool {
 
 // runSweep performs one full audit sweep and records the outcome.
 func (s *AuditSweeper) runSweep() {
-	s.mu.Lock()
-	s.sweepInProgress = true
-	s.mu.Unlock()
-
 	slog.Info("Audit sweep starting")
 	start := time.Now()
 	if err := s.sweep(); err != nil {
