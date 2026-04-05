@@ -174,20 +174,59 @@ func TestEnsureIssueExists_ReferencesClosedIssue(t *testing.T) {
 	}
 }
 
-// TestEnsureIssueExists_ExactTitleMatch verifies that a list result with a
-// different (but similar) title does not count as an existing open issue.
-func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
-	title := conventionIssueTitle("has-circleci-config", "Repository has a .circleci/config.yml file")
-	differentTitle := conventionIssueTitle("has-circleci-config", "Some other description")
+// TestEnsureIssueExists_StaleDescriptionMatchedByPrefix verifies that an open
+// issue for the same convention ID but with a stale description in its title is
+// still matched — no new issue should be created.
+func TestEnsureIssueExists_StaleDescriptionMatchedByPrefix(t *testing.T) {
+	// Simulate a pre-existing issue raised when the description was different.
+	staleTitle := conventionIssueTitle("has-circleci-config", "Old description that has since changed")
+	const existingURL = "https://github.com/lucas42/test_repo/issues/7"
+	createCalled := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(buildIssuesList([]gitHubIssue{
+				{Number: 7, HTMLURL: existingURL, Title: staleTitle, State: "open"},
+			}))
+		case r.Method == "POST":
+			createCalled = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	// Current description differs from the stale title — prefix match should still find the issue.
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "Repository has a .circleci/config.yml file"}
+	gotURL, err := client.EnsureIssueExists("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotURL != existingURL {
+		t.Errorf("expected existing issue URL %q, got %q", existingURL, gotURL)
+	}
+	if createCalled {
+		t.Error("expected no new issue to be created when stale-title issue exists for same convention ID")
+	}
+}
+
+// TestEnsureIssueExists_DifferentConventionIDNotMatched verifies that an open
+// issue for a different convention ID is not matched, even if the title format
+// is similar.
+func TestEnsureIssueExists_DifferentConventionIDNotMatched(t *testing.T) {
+	otherConventionTitle := conventionIssueTitle("some-other-convention", "Repository has a .circleci/config.yml file")
 	const newURL = "https://github.com/lucas42/test_repo/issues/12"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
-			// Return a result with a different title — should be filtered out by local title check.
 			w.Write(buildIssuesList([]gitHubIssue{
-				{Number: 7, HTMLURL: "https://github.com/lucas42/test_repo/issues/7", Title: differentTitle, State: "open"},
+				{Number: 8, HTMLURL: "https://github.com/lucas42/test_repo/issues/8", Title: otherConventionTitle, State: "open"},
 			}))
 		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/"):
 			w.Header().Set("Content-Type", "application/json")
@@ -195,7 +234,6 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 			json.NewEncoder(w).Encode(gitHubIssue{
 				Number:  12,
 				HTMLURL: newURL,
-				Title:   title,
 				State:   "open",
 			})
 		default:
@@ -210,7 +248,7 @@ func TestEnsureIssueExists_ExactTitleMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should have created a new issue, not returned the mismatched one.
+	// Different convention ID — should have created a new issue.
 	if gotURL != newURL {
 		t.Errorf("expected new issue URL %q, got %q", newURL, gotURL)
 	}
@@ -553,6 +591,45 @@ func TestCloseIssueIfOpen_ClosesOpenIssue(t *testing.T) {
 	}
 	if !issueClosed {
 		t.Error("expected issue to be closed")
+	}
+}
+
+// TestCloseIssueIfOpen_ClosesStaleTitle verifies that CloseIssueIfOpen still
+// finds and closes an issue whose title has a stale description (same convention
+// ID, different description text).
+func TestCloseIssueIfOpen_ClosesStaleTitle(t *testing.T) {
+	issueClosed := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues"):
+			// Issue was raised under an old description — title is stale.
+			staleTitle := conventionIssueTitle("has-circleci-config", "Old description")
+			w.Write(buildIssuesList([]gitHubIssue{
+				{Number: 99, HTMLURL: "https://github.com/lucas42/test_repo/issues/99", Title: staleTitle, State: "open"},
+			}))
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":1}`))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/99"):
+			issueClosed = true
+			w.Write([]byte(`{"number":99,"state":"closed"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewGitHubIssueClient(server.URL, "fake-token")
+	// Current description differs from the stale title — should still close by prefix match.
+	conv := ConventionInfo{ID: "has-circleci-config", Description: "New description after convention was updated"}
+	err := client.CloseIssueIfOpen("lucas42/test_repo", conv)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !issueClosed {
+		t.Error("expected stale-title issue to be closed by prefix match")
 	}
 }
 

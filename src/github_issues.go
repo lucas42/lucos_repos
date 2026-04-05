@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 )
 
 // auditFindingLabel is the label applied to all issues raised by the audit tool.
@@ -23,6 +24,14 @@ var ErrIssuesUnavailable = errors.New("issues unavailable for repo")
 // The format is: [Convention] <id>: <description>
 func conventionIssueTitle(conventionID, description string) string {
 	return fmt.Sprintf("[Convention] %s: %s", conventionID, description)
+}
+
+// conventionIssuePrefix returns the stable title prefix for a convention.
+// The format is: [Convention] <id>:
+// The convention ID is documented as immutable, so this prefix is safe to use
+// for matching existing issues even when the description has changed.
+func conventionIssuePrefix(conventionID string) string {
+	return fmt.Sprintf("[Convention] %s:", conventionID)
 }
 
 // gitHubIssue represents a GitHub issue as returned by the Issues API.
@@ -67,8 +76,9 @@ type ConventionInfo struct {
 func (c *GitHubIssueClient) EnsureIssueExists(repo string, conv ConventionInfo) (string, error) {
 	title := conventionIssueTitle(conv.ID, conv.Description)
 
-	// Check for an existing open issue.
-	existingURL, err := c.findOpenIssue(repo, title)
+	// Check for an existing open issue (matched by convention ID prefix,
+	// not exact title, so stale-description issues are still found).
+	existingURL, err := c.findOpenIssue(repo, conv.ID)
 	if err != nil {
 		return "", fmt.Errorf("failed to search for existing issue: %w", err)
 	}
@@ -94,9 +104,10 @@ func (c *GitHubIssueClient) EnsureIssueExists(repo string, conv ConventionInfo) 
 }
 
 // findOpenIssue fetches open issues with the audit-finding label on the given repo
-// and returns the HTML URL of the first one whose title matches exactly, or "" if none.
-func (c *GitHubIssueClient) findOpenIssue(repo, title string) (string, error) {
-	issue, err := c.findOpenIssueObject(repo, title)
+// and returns the HTML URL of the first one whose title matches the convention ID
+// prefix, or "" if none.
+func (c *GitHubIssueClient) findOpenIssue(repo, conventionID string) (string, error) {
+	issue, err := c.findOpenIssueObject(repo, conventionID)
 	if err != nil {
 		return "", err
 	}
@@ -107,10 +118,15 @@ func (c *GitHubIssueClient) findOpenIssue(repo, title string) (string, error) {
 }
 
 // findOpenIssueObject fetches open issues with the audit-finding label on the
-// given repo and returns the first gitHubIssue whose title matches exactly,
-// or nil if none. It gives callers access to the issue number for close/comment operations.
-func (c *GitHubIssueClient) findOpenIssueObject(repo, title string) (*gitHubIssue, error) {
-	// Issues List API: fetch all open audit-finding issues, then filter locally for exact title.
+// given repo and returns the first gitHubIssue whose title starts with the
+// "[Convention] <id>:" prefix, or nil if none.
+//
+// Prefix matching rather than exact title matching means issues raised under an
+// older Description value are still found when the convention's Description
+// field changes. The convention ID is documented as immutable, so the prefix is
+// stable.
+func (c *GitHubIssueClient) findOpenIssueObject(repo, conventionID string) (*gitHubIssue, error) {
+	// Issues List API: fetch all open audit-finding issues, then filter locally.
 	// per_page=100 is the maximum; pagination is not needed in practice since there should be
 	// at most one open audit-finding issue per convention per repo.
 	listURL := fmt.Sprintf("%s/repos/%s/issues?labels=%s&state=open&per_page=100", c.baseURL, repo, auditFindingLabel)
@@ -120,8 +136,9 @@ func (c *GitHubIssueClient) findOpenIssueObject(repo, title string) (*gitHubIssu
 		return nil, fmt.Errorf("failed to list open issues: %w", err)
 	}
 
+	prefix := conventionIssuePrefix(conventionID)
 	for i, issue := range issues {
-		if issue.Title == title {
+		if strings.HasPrefix(issue.Title, prefix) {
 			return &issues[i], nil
 		}
 	}
@@ -211,9 +228,7 @@ func (c *GitHubIssueClient) fetchIssuesList(listURL string) ([]gitHubIssue, erro
 // issue is found, it is a no-op. A closing comment is posted before closing
 // to explain why the issue was resolved.
 func (c *GitHubIssueClient) CloseIssueIfOpen(repo string, conv ConventionInfo) error {
-	title := conventionIssueTitle(conv.ID, conv.Description)
-
-	issue, err := c.findOpenIssueObject(repo, title)
+	issue, err := c.findOpenIssueObject(repo, conv.ID)
 	if err != nil {
 		return fmt.Errorf("failed to search for open issue to close: %w", err)
 	}
