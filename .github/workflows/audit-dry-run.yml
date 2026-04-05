@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
 jobs:
   audit-dry-run:
     runs-on: ubuntu-latest
