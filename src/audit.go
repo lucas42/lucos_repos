@@ -82,6 +82,7 @@ type AuditSweeper struct {
 	mu                   sync.Mutex
 	lastSweepCompletedAt time.Time
 	lastSweepErr         error
+	sweepInProgress      bool
 }
 
 // NewAuditSweeper creates a new AuditSweeper. The sweeper does not start
@@ -106,11 +107,11 @@ func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient, system string) *Audit
 // sweepInterval. It is safe to call only once.
 func (s *AuditSweeper) Start() {
 	go func() {
-		s.runSweep()
+		s.TriggerSweep()
 		ticker := time.NewTicker(s.sweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			s.runSweep()
+			s.TriggerSweep()
 		}
 	}()
 }
@@ -123,6 +124,20 @@ func (s *AuditSweeper) Status() (completedAt time.Time, lastErr error) {
 	return s.lastSweepCompletedAt, s.lastSweepErr
 }
 
+// TriggerSweep starts a full audit sweep in a background goroutine.
+// It returns true if the sweep was started, or false if one is already in progress.
+func (s *AuditSweeper) TriggerSweep() bool {
+	s.mu.Lock()
+	if s.sweepInProgress {
+		s.mu.Unlock()
+		return false
+	}
+	s.sweepInProgress = true
+	s.mu.Unlock()
+	go s.runSweep()
+	return true
+}
+
 // runSweep performs one full audit sweep and records the outcome.
 func (s *AuditSweeper) runSweep() {
 	slog.Info("Audit sweep starting")
@@ -131,6 +146,7 @@ func (s *AuditSweeper) runSweep() {
 		slog.Error("Audit sweep failed", "error", err, "duration", time.Since(start))
 		s.mu.Lock()
 		s.lastSweepErr = err
+		s.sweepInProgress = false
 		s.mu.Unlock()
 		s.reportToScheduleTracker("error", err.Error())
 		return
@@ -139,6 +155,7 @@ func (s *AuditSweeper) runSweep() {
 	s.mu.Lock()
 	s.lastSweepCompletedAt = time.Now()
 	s.lastSweepErr = nil
+	s.sweepInProgress = false
 	s.mu.Unlock()
 	s.reportToScheduleTracker("success", "")
 }

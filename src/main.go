@@ -212,6 +212,7 @@ func main() {
 
 	mux.HandleFunc("GET /api/status/", newSingleRepoStatusHandler(db))
 	mux.HandleFunc("POST /api/rerun", newRerunHandler(db, githubAuth, githubAPIBaseURL, configyBaseURL))
+	mux.HandleFunc("POST /api/sweep", newSweepHandler(sweeper))
 	oidcValidator := NewGitHubOIDCValidator("lucas42")
 	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, oidcValidator))
 
