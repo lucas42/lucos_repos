@@ -640,6 +640,9 @@ type pullRequestEntry struct {
 	Head   struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 // GitHubRecentPRCheckNamesFromBase finds a recent PR (open, then recently
@@ -714,6 +717,87 @@ func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, er
 	}
 
 	// No suitable PR found.
+	return nil, nil
+}
+
+// GitHubRecentDependabotPRCheckNamesFromBase finds a recent PR authored by
+// dependabot[bot] (prefer closed/merged, then open) and returns all check
+// names reported on its head commit — both check runs and commit status
+// contexts. Fetches up to 10 recent PRs per state and filters client-side
+// for dependabot authorship. Returns (nil, nil) if no suitable Dependabot PR
+// is found or the API is unavailable.
+func GitHubRecentDependabotPRCheckNamesFromBase(baseURL, token, repo string) ([]string, error) {
+	// Prefer closed PRs (checks have had time to complete), then open.
+	for _, state := range []string{"closed", "open"} {
+		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=10", baseURL, repo, state)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build PR list request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub API request failed: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			continue
+		}
+
+		var prs []pullRequestEntry
+		err = json.NewDecoder(resp.Body).Decode(&prs)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode PR list response: %w", err)
+		}
+
+		// Filter to Dependabot-authored PRs.
+		for _, pr := range prs {
+			if pr.User.Login != "dependabot[bot]" {
+				continue
+			}
+			if pr.Head.SHA == "" {
+				continue
+			}
+			sha := pr.Head.SHA
+
+			// Fetch both check runs and commit statuses for the PR head,
+			// mirroring the main-branch approach.
+			checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha)
+			if err != nil {
+				return nil, err
+			}
+			statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha)
+			if err != nil {
+				return nil, err
+			}
+
+			// Merge both sources into a single deduplicated list.
+			seen := make(map[string]bool)
+			var names []string
+			for _, name := range checkRunNames {
+				if !seen[name] {
+					seen[name] = true
+					names = append(names, name)
+				}
+			}
+			for _, ctx := range statusContexts {
+				if !seen[ctx] {
+					seen[ctx] = true
+					names = append(names, ctx)
+				}
+			}
+			return names, nil
+		}
+	}
+
+	// No suitable Dependabot PR found.
 	return nil, nil
 }
 
