@@ -3,6 +3,12 @@ name: Audit dry-run
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to post the dry-run diff comment on'
+        required: true
+        type: string
 
 permissions: {}
 
@@ -41,8 +47,8 @@ jobs:
       - name: Compute diff and post PR comment
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BRANCH: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           DIFF=$(./lucos_repos audit diff \
             --baseline baseline.json \
