@@ -200,7 +200,11 @@ func (s *AuditSweeper) sweep() error {
 	// Enable in-memory response caching for the duration of this sweep.
 	// This deduplicates identical GitHub API calls made by different conventions
 	// against the same repo (e.g. branch protection fetched 3-5x per repo).
-	cachingTransport := conventions.NewCachingTransport(http.DefaultTransport)
+	// RateLimitTransport sits inside the cache so rate-limit 403s are never
+	// cached — they are either retried (after waiting for reset) or surfaced
+	// as distinct errors rather than being misattributed as permission failures.
+	rateLimitTransport := conventions.NewRateLimitTransport(http.DefaultTransport)
+	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
 	conventions.SetHTTPClient(cachingClient)
 	defer conventions.SetHTTPClient(nil)
