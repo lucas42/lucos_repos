@@ -1,0 +1,40 @@
+name: Audit repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Repository to audit (e.g. lucas42/lucos_photos). Leave blank to audit all repos for the given convention.'
+        required: false
+        type: string
+      convention:
+        description: 'Convention ID to check (e.g. required-status-checks-coherent). Leave blank to run all conventions for the given repo.'
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  audit-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger re-audit
+        env:
+          REPO: ${{ inputs.repo }}
+          CONVENTION: ${{ inputs.convention }}
+        run: |
+          PARAMS=""
+          if [ -n "$REPO" ]; then
+            PARAMS="${PARAMS}repo=${REPO}"
+          fi
+          if [ -n "$CONVENTION" ]; then
+            [ -n "$PARAMS" ] && PARAMS="${PARAMS}&"
+            PARAMS="${PARAMS}convention=${CONVENTION}"
+          fi
+          if [ -z "$PARAMS" ]; then
+            echo "Error: at least one of 'repo' or 'convention' must be specified"
+            exit 1
+          fi
+          echo "POST https://repos.l42.eu/api/rerun?${PARAMS}"
+          curl -sf -X POST "https://repos.l42.eu/api/rerun?${PARAMS}" \
+            | python3 -m json.tool
