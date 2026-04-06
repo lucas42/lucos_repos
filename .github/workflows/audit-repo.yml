@@ -36,5 +36,5 @@ jobs:
             exit 1
           fi
           echo "POST https://repos.l42.eu/api/rerun?${PARAMS}"
-          curl -sf -X POST "https://repos.l42.eu/api/rerun?${PARAMS}" \
+          curl -sfS -X POST "https://repos.l42.eu/api/rerun?${PARAMS}" \
             | python3 -m json.tool
