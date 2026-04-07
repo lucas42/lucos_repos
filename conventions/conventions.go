@@ -285,6 +285,10 @@ func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string)
 // response that we care about.
 type branchProtectionResponse struct {
 	RequiredStatusChecks *struct {
+		// Strict corresponds to "Require branches to be up to date before merging".
+		// When true, PRs must be rebased onto the latest main before merging.
+		// This blocks Dependabot PRs from merging when more than one is open.
+		Strict bool `json:"strict"`
 		// Contexts is the legacy field populated by older GitHub UI and API calls.
 		Contexts []string `json:"contexts"`
 		// Checks is the modern field populated by the current GitHub UI.
