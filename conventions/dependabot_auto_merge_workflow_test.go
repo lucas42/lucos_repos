@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -67,21 +68,33 @@ const repoSecretsJSON = `{"total_count":2,"secrets":[{"name":"CODE_REVIEWER_APP_
 const repoSecretsMissingPrivateKeyJSON = `{"total_count":1,"secrets":[{"name":"CODE_REVIEWER_APP_ID"}]}`
 const repoSecretsEmptyJSON = `{"total_count":0,"secrets":[]}`
 
-// TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename verifies that a workflow
-// at the canonical new filename passes.
-func TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// bothStoresHandler returns a handler that serves the given Actions and
+// Dependabot secrets JSON responses alongside a given workflow file.
+func bothStoresHandler(workflowPath, workflowContent, actionsSecretsJSON, dependabotSecretsJSON string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
-			return
+		switch r.URL.Path {
+		case workflowPath:
+			w.Write([]byte(encodeWorkflowContent(workflowContent)))
+		case "/repos/lucas42/test_repo/actions/secrets":
+			w.Write([]byte(actionsSecretsJSON))
+		case "/repos/lucas42/test_repo/dependabot/secrets":
+			w.Write([]byte(dependabotSecretsJSON))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
-			w.Write([]byte(repoSecretsJSON))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename verifies that a workflow
+// at the canonical new filename passes when both secret stores are configured.
+func TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename(t *testing.T) {
+	server := httptest.NewServer(bothStoresHandler(
+		"/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml",
+		validDependabotAutoMergeYAML,
+		repoSecretsJSON,
+		repoSecretsJSON,
+	))
 	defer server.Close()
 
 	repo := RepoContext{
@@ -100,18 +113,12 @@ func TestDependabotAutoMergeWorkflow_ValidWorkflow_NewFilename(t *testing.T) {
 // TestDependabotAutoMergeWorkflow_ValidWorkflow_LegacyFilename verifies that a workflow
 // at the legacy auto-merge.yml filename still passes (fallback support).
 func TestDependabotAutoMergeWorkflow_ValidWorkflow_LegacyFilename(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
-			return
-		}
-		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
-			w.Write([]byte(repoSecretsJSON))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	server := httptest.NewServer(bothStoresHandler(
+		"/repos/lucas42/test_repo/contents/.github/workflows/auto-merge.yml",
+		validDependabotAutoMergeYAML,
+		repoSecretsJSON,
+		repoSecretsJSON,
+	))
 	defer server.Close()
 
 	repo := RepoContext{
@@ -127,21 +134,15 @@ func TestDependabotAutoMergeWorkflow_ValidWorkflow_LegacyFilename(t *testing.T) 
 	}
 }
 
-// TestDependabotAutoMergeWorkflow_SecretsNotConfigured verifies that a workflow
-// referencing the secrets but missing them on the repo fails.
-func TestDependabotAutoMergeWorkflow_SecretsNotConfigured(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
-			return
-		}
-		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
-			w.Write([]byte(repoSecretsEmptyJSON))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+// TestDependabotAutoMergeWorkflow_ActionsSecretsNotConfigured verifies that a workflow
+// whose secrets are missing from the Actions store fails with a clear message.
+func TestDependabotAutoMergeWorkflow_ActionsSecretsNotConfigured(t *testing.T) {
+	server := httptest.NewServer(bothStoresHandler(
+		"/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml",
+		validDependabotAutoMergeYAML,
+		repoSecretsEmptyJSON, // Actions: empty
+		repoSecretsJSON,      // Dependabot: present
+	))
 	defer server.Close()
 
 	repo := RepoContext{
@@ -153,28 +154,25 @@ func TestDependabotAutoMergeWorkflow_SecretsNotConfigured(t *testing.T) {
 
 	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
 	if result.Pass {
-		t.Errorf("expected Pass=false when secrets not configured on repo, got Detail=%q", result.Detail)
+		t.Errorf("expected Pass=false when Actions secrets not configured, got Detail=%q", result.Detail)
 	}
 	if result.Err != nil {
 		t.Errorf("expected Err=nil, got %v", result.Err)
 	}
+	if result.Detail != "" && !strings.Contains(result.Detail, "Actions secrets") {
+		t.Errorf("expected failure message to mention Actions secrets, got Detail=%q", result.Detail)
+	}
 }
 
-// TestDependabotAutoMergeWorkflow_OneSecretMissing verifies that a repo missing
-// only CODE_REVIEWER_PRIVATE_KEY on the repo fails with a clear message.
-func TestDependabotAutoMergeWorkflow_OneSecretMissing(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
-			return
-		}
-		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
-			w.Write([]byte(repoSecretsMissingPrivateKeyJSON))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+// TestDependabotAutoMergeWorkflow_DependabotSecretsNotConfigured verifies that a workflow
+// whose secrets are missing from the Dependabot store fails with a clear message.
+func TestDependabotAutoMergeWorkflow_DependabotSecretsNotConfigured(t *testing.T) {
+	server := httptest.NewServer(bothStoresHandler(
+		"/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml",
+		validDependabotAutoMergeYAML,
+		repoSecretsJSON,      // Actions: present
+		repoSecretsEmptyJSON, // Dependabot: empty
+	))
 	defer server.Close()
 
 	repo := RepoContext{
@@ -186,23 +184,53 @@ func TestDependabotAutoMergeWorkflow_OneSecretMissing(t *testing.T) {
 
 	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
 	if result.Pass {
-		t.Errorf("expected Pass=false when CODE_REVIEWER_PRIVATE_KEY not configured, got Detail=%q", result.Detail)
+		t.Errorf("expected Pass=false when Dependabot secrets not configured, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+	if result.Detail != "" && !strings.Contains(result.Detail, "Dependabot secrets") {
+		t.Errorf("expected failure message to mention Dependabot secrets, got Detail=%q", result.Detail)
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_OneActionSecretMissing verifies that a repo missing
+// only CODE_REVIEWER_PRIVATE_KEY from the Actions store fails.
+func TestDependabotAutoMergeWorkflow_OneActionSecretMissing(t *testing.T) {
+	server := httptest.NewServer(bothStoresHandler(
+		"/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml",
+		validDependabotAutoMergeYAML,
+		repoSecretsMissingPrivateKeyJSON, // Actions: missing private key
+		repoSecretsJSON,                  // Dependabot: present
+	))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Pass {
+		t.Errorf("expected Pass=false when CODE_REVIEWER_PRIVATE_KEY not in Actions store, got Detail=%q", result.Detail)
 	}
 	if result.Err != nil {
 		t.Errorf("expected Err=nil, got %v", result.Err)
 	}
 }
 
-// TestDependabotAutoMergeWorkflow_SecretsAPIError verifies that an error from the
-// secrets API sets Err (after the workflow check passes).
-func TestDependabotAutoMergeWorkflow_SecretsAPIError(t *testing.T) {
+// TestDependabotAutoMergeWorkflow_ActionsSecretsAPIError verifies that an error from
+// the Actions secrets API sets Err.
+func TestDependabotAutoMergeWorkflow_ActionsSecretsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
 			return
 		}
-		// secrets API returns 500
+		// Both secret APIs return 500
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
@@ -216,7 +244,38 @@ func TestDependabotAutoMergeWorkflow_SecretsAPIError(t *testing.T) {
 
 	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
 	if result.Err == nil {
-		t.Errorf("expected Err!=nil for secrets API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
+		t.Errorf("expected Err!=nil for Actions secrets API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_DependabotSecretsAPIError verifies that an error
+// from the Dependabot secrets API sets Err (after the Actions check passes).
+func TestDependabotAutoMergeWorkflow_DependabotSecretsAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
+			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
+			return
+		}
+		if r.URL.Path == "/repos/lucas42/test_repo/actions/secrets" {
+			w.Write([]byte(repoSecretsJSON))
+			return
+		}
+		// Dependabot secrets API returns 500
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Err == nil {
+		t.Errorf("expected Err!=nil for Dependabot secrets API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
 	}
 }
 
@@ -294,7 +353,7 @@ jobs:
 `
 
 // TestDependabotAutoMergeWorkflow_SecretsInherit verifies that a workflow using
-// secrets: inherit fails — Dependabot PRs cannot access secrets on pull_request events.
+// secrets: inherit fails — callers must explicitly enumerate secrets.
 func TestDependabotAutoMergeWorkflow_SecretsInherit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
