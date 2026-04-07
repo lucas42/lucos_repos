@@ -828,7 +828,28 @@ func GitHubRepoSecretNames(token, repo string) ([]string, error) {
 // implemented because lucos repos have far fewer than 100 secrets in practice.
 // If a repo ever exceeds 100 secrets this check would produce a false negative.
 func GitHubRepoSecretNamesFromBase(baseURL, token, repo string) ([]string, error) {
-	url := fmt.Sprintf("%s/repos/%s/actions/secrets?per_page=100", baseURL, repo)
+	return gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, "actions/secrets")
+}
+
+// GitHubRepoDependabotSecretNames returns the names of all Dependabot secrets
+// configured on the given repository. Returns an empty slice (not an error) if
+// the repo has no Dependabot secrets.
+func GitHubRepoDependabotSecretNames(token, repo string) ([]string, error) {
+	return GitHubRepoDependabotSecretNamesFromBase(GitHubBaseURL, token, repo)
+}
+
+// GitHubRepoDependabotSecretNamesFromBase is the implementation of
+// GitHubRepoDependabotSecretNames with an injectable base URL, used by tests.
+func GitHubRepoDependabotSecretNamesFromBase(baseURL, token, repo string) ([]string, error) {
+	return gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, "dependabot/secrets")
+}
+
+// gitHubRepoSecretNamesForStoreFromBase fetches secret names from a GitHub
+// secrets API endpoint. The store parameter selects which store to query:
+// "actions/secrets" for Actions secrets, "dependabot/secrets" for Dependabot.
+// Both endpoints share the same response schema.
+func gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, store string) ([]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s?per_page=100", baseURL, repo, store)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
@@ -860,7 +881,7 @@ func GitHubRepoSecretNamesFromBase(baseURL, token, repo string) ([]string, error
 	case http.StatusNotFound:
 		return []string{}, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching secrets for %s", resp.StatusCode, repo)
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching %s for %s", resp.StatusCode, store, repo)
 	}
 }
 
