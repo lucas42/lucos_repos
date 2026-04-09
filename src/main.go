@@ -146,20 +146,12 @@ func main() {
 			dbCheck.Debug = dbErr.Error()
 		}
 
-		// Report the last audit sweep status.
-		// OK is always true: schedule-tracker is the sole alerting signal for sweep reliability.
-		// Transient errors (e.g. secondary rate limiting) should not flip the health check red.
-		completedAt, sweepErr := sweeper.Status()
-		auditCheck := Check{
-			OK:         true,
-			TechDetail: "Reports the outcome of the last scheduled audit sweep (alerting via schedule-tracker only)",
-		}
-		if sweepErr != nil {
-			auditCheck.Debug = "Last sweep error: " + sweepErr.Error()
-		} else if completedAt.IsZero() {
-			auditCheck.Debug = "No sweep has completed yet"
-		} else {
-			auditCheck.Debug = "Last sweep completed at " + completedAt.UTC().Format(time.RFC3339)
+		// Compute seconds since last audit sweep for the metrics field.
+		completedAt, _ := sweeper.Status()
+		var secondsSinceLastSweep *float64
+		if !completedAt.IsZero() {
+			secs := time.Since(completedAt).Seconds()
+			secondsSinceLastSweep = &secs
 		}
 
 		// Report stale unmerged Dependabot PRs.
@@ -185,15 +177,19 @@ func main() {
 			)
 		}
 
+		metrics := map[string]any{}
+		if secondsSinceLastSweep != nil {
+			metrics["seconds_since_last_sweep"] = *secondsSinceLastSweep
+		}
+
 		info := InfoResponse{
 			System: system,
 			Checks: map[string]any{
-				"github-auth":            githubAuthCheck,
-				"database":               dbCheck,
-				"last-audit-completed":   auditCheck,
-				"stale-dependabot-prs":   staleDependabotCheck,
+				"github-auth":          githubAuthCheck,
+				"database":             dbCheck,
+				"stale-dependabot-prs": staleDependabotCheck,
 			},
-			Metrics: map[string]any{},
+			Metrics: metrics,
 			CI: map[string]string{
 				"circle": "gh/lucas42/lucos_repos",
 			},

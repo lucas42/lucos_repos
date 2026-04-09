@@ -8,7 +8,7 @@ import (
 //
 // It triggers a full audit sweep equivalent to the scheduled sweep — running
 // all registered conventions across all repos, updating issue state, and
-// updating sweeper.Status() so the last-audit-completed check reflects the
+// updating sweeper.Status() so the seconds_since_last_sweep metric reflects the
 // new run.
 //
 // The sweep runs in the background and the endpoint returns 202 Accepted
