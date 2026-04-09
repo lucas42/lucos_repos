@@ -1,4 +1,4 @@
-FROM lucas42/lucos_navbar:2.1.43 AS navbar
+FROM lucas42/lucos_navbar:2.1.44 AS navbar
 
 FROM golang:1.26 AS builder
 
