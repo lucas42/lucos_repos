@@ -147,19 +147,18 @@ func main() {
 		}
 
 		// Report the last audit sweep status.
+		// OK is always true: schedule-tracker is the sole alerting signal for sweep reliability.
+		// Transient errors (e.g. secondary rate limiting) should not flip the health check red.
 		completedAt, sweepErr := sweeper.Status()
 		auditCheck := Check{
-			TechDetail: "Checks whether the last scheduled audit sweep completed successfully",
+			OK:         true,
+			TechDetail: "Reports the outcome of the last scheduled audit sweep (alerting via schedule-tracker only)",
 		}
 		if sweepErr != nil {
-			auditCheck.OK = false
-			auditCheck.Debug = sweepErr.Error()
+			auditCheck.Debug = "Last sweep error: " + sweepErr.Error()
 		} else if completedAt.IsZero() {
-			// First sweep hasn't finished yet — not an error, just not ready.
-			auditCheck.OK = true
 			auditCheck.Debug = "No sweep has completed yet"
 		} else {
-			auditCheck.OK = true
 			auditCheck.Debug = "Last sweep completed at " + completedAt.UTC().Format(time.RFC3339)
 		}
 
