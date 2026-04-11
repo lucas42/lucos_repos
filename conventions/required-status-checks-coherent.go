@@ -127,7 +127,7 @@ func init() {
 				}
 			}
 			if hasDependabot {
-				depCheckNames, err := GitHubRecentDependabotPRCheckNamesFromBase(base, repo.GitHubToken, repo.Name)
+				depInfo, err := GitHubRecentDependabotPRInfoFromBase(base, repo.GitHubToken, repo.Name)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-dependabot-pr-checks", "error", err)
 					return ConventionResult{
@@ -135,14 +135,29 @@ func init() {
 						Err:        fmt.Errorf("error fetching Dependabot PR checks: %w", err),
 					}
 				}
-				if depCheckNames != nil {
+				if depInfo != nil {
 					depReported := make(map[string]bool)
-					for _, name := range depCheckNames {
+					for _, name := range depInfo.HeadCheckNames {
 						depReported[name] = true
+					}
+					depBaseReported := make(map[string]bool)
+					for _, name := range depInfo.BaseCheckNames {
+						depBaseReported[name] = true
 					}
 					for _, check := range requiredChecks {
 						if !depReported[check] {
-							issues = append(issues, fmt.Sprintf("required check %q is not reported on recent Dependabot PRs — will permanently block auto-merge for all dependency updates", check))
+							// Only flag as Dependabot-unsatisfiable if the check
+							// was already present on the dep PR's base commit (i.e.
+							// on main when the PR was opened). If it wasn't on the
+							// base, the check was added to main after the dep PR
+							// was created — a timing artefact that will resolve
+							// naturally on the next Dependabot PR.
+							//
+							// When BaseCheckNames is nil (base SHA unavailable),
+							// err on the side of caution and flag the check.
+							if depInfo.BaseCheckNames == nil || depBaseReported[check] {
+								issues = append(issues, fmt.Sprintf("required check %q is not reported on recent Dependabot PRs — will permanently block auto-merge for all dependency updates", check))
+							}
 						}
 					}
 				}
