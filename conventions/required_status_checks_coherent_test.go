@@ -347,6 +347,29 @@ func TestRequiredStatusChecksCoherent_DependabotTimingArtefact(t *testing.T) {
 	}
 }
 
+func TestRequiredStatusChecksCoherent_DependabotTimingArtefact_EmptyBase(t *testing.T) {
+	// A new required check ("ci/circleci: new-job") is missing from the dep PR,
+	// and the dep PR base commit has zero checks (e.g. a repo whose oldest
+	// commits predate any recorded CI run). The base SHA is available but empty
+	// — this should still be treated as a timing artefact, not a false positive.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:       []string{"ci/circleci: test", "ci/circleci: new-job"},
+		headCheckRunNames:    []string{"ci/circleci: test", "ci/circleci: new-job"},
+		hasDependabotYML:     true,
+		dependabotPRSHA:      "dep123",
+		dependabotPRChecks:   []string{"ci/circleci: test"},
+		dependabotBaseSHA:    "base456",
+		dependabotBaseChecks: nil, // base SHA present but no checks recorded
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when base SHA is set but has zero checks (timing artefact), got: %s", result.Detail)
+	}
+}
+
 func TestRequiredStatusChecksCoherent_EmptyHeadChecks_NoStaleFlag(t *testing.T) {
 	// HEAD reports no checks at all (e.g. docs-only commit with path filters).
 	// The stale check aspect should be skipped rather than flagging everything

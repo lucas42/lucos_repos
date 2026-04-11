@@ -904,7 +904,7 @@ func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*Dependa
 				}
 
 				baseSeen := make(map[string]bool)
-				var baseNames []string
+				baseNames := make([]string, 0)
 				for _, name := range baseCheckRuns {
 					if !baseSeen[name] {
 						baseSeen[name] = true
