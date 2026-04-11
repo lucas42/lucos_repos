@@ -64,7 +64,7 @@ func TestRerunHandler_UnknownRepo(t *testing.T) {
 // convention for a single repo returns the correct result and updates the DB.
 func TestRerunHandler_RepoAndConvention(t *testing.T) {
 	db := openTestDB(t)
-	db.UpsertRepo("lucas42/test_repo", "system")
+	db.UpsertRepo("lucas42/test_repo", "system", false)
 
 	// Seed a stale failing finding so we can verify the DB is updated.
 	db.UpsertConvention("allow-auto-merge", "Allow auto-merge")
@@ -138,7 +138,7 @@ func TestRerunHandler_RepoAndConvention(t *testing.T) {
 // still failing, the existing issue URL is preserved in the response and DB.
 func TestRerunHandler_PreservesIssueURL(t *testing.T) {
 	db := openTestDB(t)
-	db.UpsertRepo("lucas42/test_repo", "system")
+	db.UpsertRepo("lucas42/test_repo", "system", false)
 	db.UpsertConvention("allow-auto-merge", "Allow auto-merge")
 	db.SaveFinding(conventions.ConventionResult{
 		Convention: "allow-auto-merge",
@@ -198,8 +198,8 @@ func TestRerunHandler_PreservesIssueURL(t *testing.T) {
 // convention re-runs it across all repos that have it in scope.
 func TestRerunHandler_ConventionOnlyScope(t *testing.T) {
 	db := openTestDB(t)
-	db.UpsertRepo("lucas42/repo_a", "system")
-	db.UpsertRepo("lucas42/repo_b", "component")
+	db.UpsertRepo("lucas42/repo_a", "system", false)
+	db.UpsertRepo("lucas42/repo_b", "component", false)
 	db.UpsertConvention("allow-auto-merge", "Allow auto-merge")
 	db.SaveFinding(conventions.ConventionResult{Convention: "allow-auto-merge", Pass: true, Detail: "ok"}, "lucas42/repo_a", "")
 	db.SaveFinding(conventions.ConventionResult{Convention: "allow-auto-merge", Pass: true, Detail: "ok"}, "lucas42/repo_b", "")
@@ -243,7 +243,7 @@ func TestRerunHandler_ConventionOnlyScope(t *testing.T) {
 // all applicable conventions for it.
 func TestRerunHandler_RepoOnly(t *testing.T) {
 	db := openTestDB(t)
-	db.UpsertRepo("lucas42/test_repo", "system")
+	db.UpsertRepo("lucas42/test_repo", "system", false)
 	db.UpsertConvention("allow-auto-merge", "Allow auto-merge")
 	db.SaveFinding(conventions.ConventionResult{Convention: "allow-auto-merge", Pass: true, Detail: "ok"}, "lucas42/test_repo", "")
 

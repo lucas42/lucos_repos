@@ -77,7 +77,7 @@ func TestSingleRepoStatusHandler_NotFound(t *testing.T) {
 func TestSingleRepoStatusHandler_Found(t *testing.T) {
 	db := openTestDB(t)
 	db.UpsertConvention("test-convention", "test")
-	db.UpsertRepo("lucas42/test_repo", "system")
+	db.UpsertRepo("lucas42/test_repo", "system", false)
 	db.SaveFinding(conventions.ConventionResult{
 		Convention: "test-convention",
 		Pass:       true,

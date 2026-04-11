@@ -121,7 +121,7 @@ func TestUpsertRepo(t *testing.T) {
 	db := openTestDB(t)
 
 	before := time.Now()
-	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	after := time.Now()
@@ -149,7 +149,7 @@ func TestUpsertRepo(t *testing.T) {
 func TestUpsertRepo_StoresType(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeSystem); err != nil {
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeSystem, false); err != nil {
 		t.Fatalf("UpsertRepo (system) failed: %v", err)
 	}
 
@@ -162,7 +162,7 @@ func TestUpsertRepo_StoresType(t *testing.T) {
 	}
 
 	// Update the type.
-	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeComponent); err != nil {
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeComponent, false); err != nil {
 		t.Fatalf("UpsertRepo (component) failed: %v", err)
 	}
 	if err := db.conn.QueryRow(`SELECT repo_type FROM repos WHERE name = ?`, "lucas42/test_repo").Scan(&repoType); err != nil {
@@ -173,11 +173,81 @@ func TestUpsertRepo_StoresType(t *testing.T) {
 	}
 }
 
+// TestUpsertRepo_StoresHasCodeQLLanguage verifies that has_codeql_language is persisted and updated.
+func TestUpsertRepo_StoresHasCodeQLLanguage(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeSystem, true); err != nil {
+		t.Fatalf("UpsertRepo (app) failed: %v", err)
+	}
+
+	var hasCodeQL int
+	if err := db.conn.QueryRow(`SELECT has_codeql_language FROM repos WHERE name = ?`, "lucas42/test_repo").Scan(&hasCodeQL); err != nil {
+		t.Fatalf("failed to query has_codeql_language: %v", err)
+	}
+	if hasCodeQL != 1 {
+		t.Errorf("expected has_codeql_language 1, got %d", hasCodeQL)
+	}
+
+	// Update to infra.
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeSystem, false); err != nil {
+		t.Fatalf("UpsertRepo (infra) failed: %v", err)
+	}
+	if err := db.conn.QueryRow(`SELECT has_codeql_language FROM repos WHERE name = ?`, "lucas42/test_repo").Scan(&hasCodeQL); err != nil {
+		t.Fatalf("failed to query has_codeql_language after update: %v", err)
+	}
+	if hasCodeQL != 0 {
+		t.Errorf("expected has_codeql_language 0 after update, got %d", hasCodeQL)
+	}
+}
+
+// TestGetStatusReport_IncludesHasCodeQLLanguage verifies that the has_codeql_language flag is propagated into the status report.
+func TestGetStatusReport_IncludesHasCodeQLLanguage(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.UpsertRepo("lucas42/app_repo", conventions.RepoTypeSystem, true); err != nil {
+		t.Fatalf("UpsertRepo (app) failed: %v", err)
+	}
+	if err := db.UpsertRepo("lucas42/infra_repo", conventions.RepoTypeSystem, false); err != nil {
+		t.Fatalf("UpsertRepo (infra) failed: %v", err)
+	}
+	if err := db.UpsertConvention("conv-1", "A convention"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/app_repo", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+	if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, "lucas42/infra_repo", ""); err != nil {
+		t.Fatalf("SaveFinding failed: %v", err)
+	}
+
+	report, err := db.GetStatusReport()
+	if err != nil {
+		t.Fatalf("GetStatusReport failed: %v", err)
+	}
+
+	appRepo, ok := report.Repos["lucas42/app_repo"]
+	if !ok {
+		t.Fatal("expected entry for 'lucas42/app_repo' in report")
+	}
+	if !appRepo.HasCodeQLLanguage {
+		t.Error("expected HasCodeQLLanguage=true for app_repo")
+	}
+
+	infraRepo, ok := report.Repos["lucas42/infra_repo"]
+	if !ok {
+		t.Fatal("expected entry for 'lucas42/infra_repo' in report")
+	}
+	if infraRepo.HasCodeQLLanguage {
+		t.Error("expected HasCodeQLLanguage=false for infra_repo")
+	}
+}
+
 // TestGetStatusReport_IncludesRepoType verifies that the type is propagated into the status report.
 func TestGetStatusReport_IncludesRepoType(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeSystem); err != nil {
+	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeSystem, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("conv-1", "A convention"); err != nil {
@@ -206,7 +276,7 @@ func TestSaveFinding_Pass(t *testing.T) {
 	db := openTestDB(t)
 
 	// Set up prerequisite rows.
-	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("test-convention", "A test"); err != nil {
@@ -251,7 +321,7 @@ func TestSaveFinding_Pass(t *testing.T) {
 func TestSaveFinding_Fail(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("test-convention", "A test"); err != nil {
@@ -288,7 +358,7 @@ func TestSaveFinding_Fail(t *testing.T) {
 func TestSaveFinding_Upsert(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/test_repo", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("test-convention", "A test"); err != nil {
@@ -373,7 +443,7 @@ func TestGetStatusReport_Empty(t *testing.T) {
 func TestGetStatusReport_AllPassing(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("conv-1", "First convention"); err != nil {
@@ -422,7 +492,7 @@ func TestGetStatusReport_WithViolations(t *testing.T) {
 	db := openTestDB(t)
 
 	for _, repo := range []string{"lucas42/repo_a", "lucas42/repo_b"} {
-		if err := db.UpsertRepo(repo, conventions.RepoTypeUnconfigured); err != nil {
+		if err := db.UpsertRepo(repo, conventions.RepoTypeUnconfigured, false); err != nil {
 			t.Fatalf("UpsertRepo failed: %v", err)
 		}
 	}
@@ -483,7 +553,7 @@ func TestGetStatusReport_WithViolations(t *testing.T) {
 func TestDeleteStaleFindings_DeletesOldRows(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("conv-old", "Old convention"); err != nil {
@@ -541,7 +611,7 @@ func TestDeleteStaleFindings_NoRows(t *testing.T) {
 func TestDeleteStaleFindings_PreservesAll(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeUnconfigured); err != nil {
+	if err := db.UpsertRepo("lucas42/repo_a", conventions.RepoTypeUnconfigured, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("conv-1", "A convention"); err != nil {

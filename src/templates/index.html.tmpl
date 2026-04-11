@@ -177,6 +177,7 @@
 				<tr>
 					<th>Repository</th>
 					<th>Type</th>
+					<th>Class</th>
 					<th>Status</th>
 					{{range .Conventions}}
 					<th class="convention-header" title="{{.}}">{{.}}</th>
@@ -188,6 +189,7 @@
 				<tr>
 					<td class="repo-name">{{.Name}}</td>
 					<td class="repo-type">{{.RepoType}}</td>
+					<td class="repo-type">{{if .HasCodeQLLanguage}}<span title="Application Code">app</span>{{else}}<span title="Infrastructure Only">infra</span>{{end}}</td>
 					<td>
 						{{if .Compliant}}
 						<span class="compliance-badge badge-compliant">Compliant</span>
