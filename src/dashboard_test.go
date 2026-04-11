@@ -272,7 +272,7 @@ func (s *fixedTimeSweeper) Status() (time.Time, error) { return s.completedAt, n
 func TestDashboardHandler_WithFindings(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeSystem); err != nil {
+	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeSystem, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("has-circleci-config", "Has a CircleCI config"); err != nil {
@@ -306,6 +306,46 @@ func TestDashboardHandler_WithFindings(t *testing.T) {
 	}
 	if !strings.Contains(body, "system") {
 		t.Error("expected page to contain repo type 'system'")
+	}
+}
+
+// TestDashboardHandler_ShowsAppInfraColumn verifies the app/infra column is rendered correctly.
+func TestDashboardHandler_ShowsAppInfraColumn(t *testing.T) {
+	db := openTestDB(t)
+
+	// app_repo has CodeQL language (app).
+	if err := db.UpsertRepo("lucas42/app_repo", conventions.RepoTypeSystem, true); err != nil {
+		t.Fatalf("UpsertRepo (app) failed: %v", err)
+	}
+	// infra_repo does not (infra).
+	if err := db.UpsertRepo("lucas42/infra_repo", conventions.RepoTypeSystem, false); err != nil {
+		t.Fatalf("UpsertRepo (infra) failed: %v", err)
+	}
+	if err := db.UpsertConvention("conv-1", "A convention"); err != nil {
+		t.Fatalf("UpsertConvention failed: %v", err)
+	}
+	for _, repo := range []string{"lucas42/app_repo", "lucas42/infra_repo"} {
+		if err := db.SaveFinding(conventions.ConventionResult{Convention: "conv-1", Pass: true, Detail: "ok"}, repo, ""); err != nil {
+			t.Fatalf("SaveFinding failed: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	newDashboardHandler(db, noopSweeper{})(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Application Code") {
+		t.Error("expected page to contain title text 'Application Code' for app repo")
+	}
+	if !strings.Contains(body, "Infrastructure Only") {
+		t.Error("expected page to contain title text 'Infrastructure Only' for infra repo")
+	}
+	if !strings.Contains(body, ">app<") {
+		t.Error("expected page to contain label 'app' for app repo")
+	}
+	if !strings.Contains(body, ">infra<") {
+		t.Error("expected page to contain label 'infra' for infra repo")
 	}
 }
 
@@ -421,7 +461,7 @@ func TestBuildJSONResponse(t *testing.T) {
 func TestDashboardHandler_JSON(t *testing.T) {
 	db := openTestDB(t)
 
-	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeSystem); err != nil {
+	if err := db.UpsertRepo("lucas42/lucos_test", conventions.RepoTypeSystem, false); err != nil {
 		t.Fatalf("UpsertRepo failed: %v", err)
 	}
 	if err := db.UpsertConvention("has-circleci-config", "Has a CircleCI config"); err != nil {

@@ -60,9 +60,10 @@ func (db *DB) Ping() error {
 func (db *DB) createSchema() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS repos (
-		name          TEXT PRIMARY KEY,
-		last_audited  DATETIME,
-		repo_type     TEXT NOT NULL DEFAULT ''
+		name                 TEXT PRIMARY KEY,
+		last_audited         DATETIME,
+		repo_type            TEXT NOT NULL DEFAULT '',
+		has_codeql_language  INTEGER NOT NULL DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS conventions (
@@ -96,6 +97,13 @@ func (db *DB) createSchema() error {
 		}
 	}
 
+	// Migration: add has_codeql_language column to existing databases.
+	if _, err := db.conn.Exec(`ALTER TABLE repos ADD COLUMN has_codeql_language INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to migrate repos table (has_codeql_language): %w", err)
+		}
+	}
+
 	slog.Info("Database schema initialised")
 	return nil
 }
@@ -114,11 +122,15 @@ func (db *DB) UpsertConvention(id, description string) error {
 }
 
 // UpsertRepo inserts or updates a repo record, setting last_audited to now.
-func (db *DB) UpsertRepo(name string, repoType conventions.RepoType) error {
+func (db *DB) UpsertRepo(name string, repoType conventions.RepoType, hasCodeQLLanguage bool) error {
+	hasCodeQLInt := 0
+	if hasCodeQLLanguage {
+		hasCodeQLInt = 1
+	}
 	_, err := db.conn.Exec(
-		`INSERT INTO repos (name, last_audited, repo_type) VALUES (?, ?, ?)
-		 ON CONFLICT(name) DO UPDATE SET last_audited = excluded.last_audited, repo_type = excluded.repo_type`,
-		name, time.Now().UTC(), string(repoType),
+		`INSERT INTO repos (name, last_audited, repo_type, has_codeql_language) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(name) DO UPDATE SET last_audited = excluded.last_audited, repo_type = excluded.repo_type, has_codeql_language = excluded.has_codeql_language`,
+		name, time.Now().UTC(), string(repoType), hasCodeQLInt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert repo %s: %w", name, err)
@@ -233,9 +245,10 @@ type ConventionStatus struct {
 
 // RepoStatus is the per-repo entry in a StatusReport.
 type RepoStatus struct {
-	Type        conventions.RepoType        `json:"type"`
-	Conventions map[string]ConventionStatus `json:"conventions"`
-	Compliant   bool                        `json:"compliant"`
+	Type              conventions.RepoType        `json:"type"`
+	HasCodeQLLanguage bool                        `json:"has_codeql_language"`
+	Conventions       map[string]ConventionStatus `json:"conventions"`
+	Compliant         bool                        `json:"compliant"`
 }
 
 // StatusSummary holds aggregate counts across all repos.
@@ -251,24 +264,34 @@ type StatusReport struct {
 	Summary StatusSummary         `json:"summary"`
 }
 
-// getRepoTypes returns a map of repo name to RepoType for all repos in the database.
-func (db *DB) getRepoTypes() (map[string]conventions.RepoType, error) {
-	rows, err := db.conn.Query(`SELECT name, repo_type FROM repos`)
+// repoRecord holds the stored metadata for a single repo row.
+type repoRecord struct {
+	Type              conventions.RepoType
+	HasCodeQLLanguage bool
+}
+
+// getRepoRecords returns a map of repo name to repoRecord for all repos in the database.
+func (db *DB) getRepoRecords() (map[string]repoRecord, error) {
+	rows, err := db.conn.Query(`SELECT name, repo_type, has_codeql_language FROM repos`)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query repo types: %w", err)
+		return nil, fmt.Errorf("failed to query repo records: %w", err)
 	}
 	defer rows.Close()
 
-	result := map[string]conventions.RepoType{}
+	result := map[string]repoRecord{}
 	for rows.Next() {
 		var name, repoType string
-		if err := rows.Scan(&name, &repoType); err != nil {
-			return nil, fmt.Errorf("failed to scan repo type row: %w", err)
+		var hasCodeQLInt int
+		if err := rows.Scan(&name, &repoType, &hasCodeQLInt); err != nil {
+			return nil, fmt.Errorf("failed to scan repo record row: %w", err)
 		}
-		result[name] = conventions.RepoType(repoType)
+		result[name] = repoRecord{
+			Type:              conventions.RepoType(repoType),
+			HasCodeQLLanguage: hasCodeQLInt != 0,
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating repo type rows: %w", err)
+		return nil, fmt.Errorf("error iterating repo record rows: %w", err)
 	}
 	return result, nil
 }
@@ -276,10 +299,10 @@ func (db *DB) getRepoTypes() (map[string]conventions.RepoType, error) {
 // GetStatusReport builds a StatusReport from the cached findings in the database.
 // It returns an empty report (not an error) if no findings have been stored yet.
 func (db *DB) GetStatusReport() (StatusReport, error) {
-	// First, load the repo_type for every known repo.
-	repoTypes, err := db.getRepoTypes()
+	// First, load the stored metadata for every known repo.
+	repoRecords, err := db.getRepoRecords()
 	if err != nil {
-		return StatusReport{}, fmt.Errorf("failed to get repo types: %w", err)
+		return StatusReport{}, fmt.Errorf("failed to get repo records: %w", err)
 	}
 
 	findings, err := db.GetFindings()
@@ -291,10 +314,12 @@ func (db *DB) GetStatusReport() (StatusReport, error) {
 	for _, f := range findings {
 		rs, ok := repos[f.Repo]
 		if !ok {
+			rec := repoRecords[f.Repo]
 			rs = RepoStatus{
-				Type:        repoTypes[f.Repo],
-				Conventions: map[string]ConventionStatus{},
-				Compliant:   true,
+				Type:              rec.Type,
+				HasCodeQLLanguage: rec.HasCodeQLLanguage,
+				Conventions:       map[string]ConventionStatus{},
+				Compliant:         true,
 			}
 		}
 		rs.Conventions[f.Convention] = ConventionStatus{

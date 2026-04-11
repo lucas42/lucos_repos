@@ -261,7 +261,19 @@ func (s *AuditSweeper) sweep() error {
 			info = repoInfo{Type: conventions.RepoTypeUnconfigured}
 		}
 
-		if err := s.db.UpsertRepo(repoName, info.Type); err != nil {
+		// Fetch the repo's languages to determine the app/infra classification.
+		// The caching transport deduplicates this call for repos where
+		// no-stale-codeql-requirement-on-infra-repos also fetches languages.
+		languages, langErr := conventions.GitHubRepoLanguagesFromBase(s.githubAPIBaseURL, token, repoName)
+		hasCodeQL := false
+		if langErr != nil {
+			slog.Warn("Failed to fetch repo languages for app/infra classification", "repo", repoName, "error", langErr)
+			// Do not abort the sweep — treat as infra (false) and continue.
+		} else {
+			hasCodeQL = conventions.HasCodeQLLanguage(languages)
+		}
+
+		if err := s.db.UpsertRepo(repoName, info.Type, hasCodeQL); err != nil {
 			slog.Warn("Failed to upsert repo", "repo", repoName, "error", err)
 			continue
 		}

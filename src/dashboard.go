@@ -34,9 +34,10 @@ type dashboardCell struct {
 
 // dashboardRepo is a row in the compliance matrix.
 type dashboardRepo struct {
-	Name      string
-	RepoType  conventions.RepoType
-	Compliant bool
+	Name              string
+	RepoType          conventions.RepoType
+	HasCodeQLLanguage bool
+	Compliant         bool
 	// Cells are ordered to match DashboardData.Conventions.
 	Cells []dashboardCell
 }
@@ -99,10 +100,11 @@ func BuildDashboardData(report StatusReport) DashboardData {
 			}
 		}
 		rows = append(rows, dashboardRepo{
-			Name:      name,
-			RepoType:  rs.Type,
-			Compliant: rs.Compliant,
-			Cells:     cells,
+			Name:              name,
+			RepoType:          rs.Type,
+			HasCodeQLLanguage: rs.HasCodeQLLanguage,
+			Compliant:         rs.Compliant,
+			Cells:             cells,
 		})
 	}
 
