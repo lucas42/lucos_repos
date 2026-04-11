@@ -11,13 +11,15 @@ import (
 // coherentChecksServerOpts configures the test server for
 // required-status-checks-coherent tests.
 type coherentChecksServerOpts struct {
-	requiredChecks       []string          // nil/empty = no branch protection
-	headStatusContexts   []string          // status contexts on HEAD of main
-	headCheckRunNames    []string          // check run names on HEAD of main
-	languages            map[string]int    // repo languages (nil = empty map)
-	hasDependabotYML     bool              // whether .github/dependabot.yml exists
-	dependabotPRSHA      string            // empty = no Dependabot PR found
-	dependabotPRChecks   []string          // check runs on the Dependabot PR head
+	requiredChecks        []string       // nil/empty = no branch protection
+	headStatusContexts    []string       // status contexts on HEAD of main
+	headCheckRunNames     []string       // check run names on HEAD of main
+	languages             map[string]int // repo languages (nil = empty map)
+	hasDependabotYML      bool           // whether .github/dependabot.yml exists
+	dependabotPRSHA       string         // empty = no Dependabot PR found
+	dependabotPRChecks    []string       // check runs on the Dependabot PR head
+	dependabotBaseSHA     string         // SHA of main when the dep PR was opened (empty = no base SHA)
+	dependabotBaseChecks  []string       // check runs on the dep PR base commit
 }
 
 // coherentChecksServer builds a test HTTP server that covers all GitHub API
@@ -79,16 +81,22 @@ func coherentChecksServer(t *testing.T, opts coherentChecksServerOpts) *httptest
 				type prUser struct {
 					Login string `json:"login"`
 				}
-				type prHead struct {
+				type prRef struct {
 					SHA string `json:"sha"`
 				}
 				type pr struct {
 					Number int    `json:"number"`
-					Head   prHead `json:"head"`
+					Head   prRef  `json:"head"`
+					Base   prRef  `json:"base"`
 					User   prUser `json:"user"`
 				}
 				json.NewEncoder(w).Encode([]pr{
-					{Number: 5, Head: prHead{SHA: opts.dependabotPRSHA}, User: prUser{Login: "dependabot[bot]"}},
+					{
+						Number: 5,
+						Head:   prRef{SHA: opts.dependabotPRSHA},
+						Base:   prRef{SHA: opts.dependabotBaseSHA},
+						User:   prUser{Login: "dependabot[bot]"},
+					},
 				})
 			} else {
 				json.NewEncoder(w).Encode([]struct{}{})
@@ -106,6 +114,21 @@ func coherentChecksServer(t *testing.T, opts coherentChecksServerOpts) *httptest
 					return
 				}
 				if r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.dependabotPRSHA+"/status" {
+					json.NewEncoder(w).Encode(combinedStatusResponse{})
+					return
+				}
+			}
+			// Handle Dependabot PR base commit endpoints (dynamic SHA path).
+			if opts.dependabotBaseSHA != "" {
+				if r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.dependabotBaseSHA+"/check-runs" {
+					resp := checkRunsResp{}
+					for _, name := range opts.dependabotBaseChecks {
+						resp.CheckRuns = append(resp.CheckRuns, checkRun{Name: name})
+					}
+					json.NewEncoder(w).Encode(resp)
+					return
+				}
+				if r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.dependabotBaseSHA+"/status" {
 					json.NewEncoder(w).Encode(combinedStatusResponse{})
 					return
 				}
@@ -270,13 +293,17 @@ func TestRequiredStatusChecksCoherent_NoDependabotPRs(t *testing.T) {
 
 func TestRequiredStatusChecksCoherent_DependabotUnsatisfiable(t *testing.T) {
 	// "Analyze (go)" fires on HEAD of main but not on the Dependabot PR.
+	// It was also present on the dep PR's base commit (push-triggered CodeQL
+	// runs on every main commit), confirming this is a genuine structural issue.
 	server := coherentChecksServer(t, coherentChecksServerOpts{
-		requiredChecks:     []string{"ci/circleci: test", "Analyze (go)"},
-		headCheckRunNames:  []string{"ci/circleci: test", "Analyze (go)"},
-		languages:          map[string]int{"Go": 10000},
-		hasDependabotYML:   true,
-		dependabotPRSHA:    "dep123",
-		dependabotPRChecks: []string{"ci/circleci: test"},
+		requiredChecks:       []string{"ci/circleci: test", "Analyze (go)"},
+		headCheckRunNames:    []string{"ci/circleci: test", "Analyze (go)"},
+		languages:            map[string]int{"Go": 10000},
+		hasDependabotYML:     true,
+		dependabotPRSHA:      "dep123",
+		dependabotPRChecks:   []string{"ci/circleci: test"},
+		dependabotBaseSHA:    "base456",
+		dependabotBaseChecks: []string{"ci/circleci: test", "Analyze (go)"},
 	})
 	defer server.Close()
 
@@ -290,6 +317,33 @@ func TestRequiredStatusChecksCoherent_DependabotUnsatisfiable(t *testing.T) {
 	}
 	if !strings.Contains(result.Detail, "Dependabot") {
 		t.Errorf("expected Detail to mention 'Dependabot', got: %s", result.Detail)
+	}
+}
+
+func TestRequiredStatusChecksCoherent_DependabotTimingArtefact(t *testing.T) {
+	// A new required check ("ci/circleci: new-job") was added to main after the
+	// most recent Dependabot PR was created. The dep PR head doesn't have it,
+	// but the dep PR base also doesn't have it — so it's a timing artefact, not
+	// a permanent block. The convention should pass rather than flagging a false
+	// positive.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:       []string{"ci/circleci: test", "ci/circleci: new-job", "Analyze (go)"},
+		headCheckRunNames:    []string{"ci/circleci: test", "ci/circleci: new-job", "Analyze (go)"},
+		languages:            map[string]int{"Go": 10000},
+		hasDependabotYML:     true,
+		dependabotPRSHA:      "dep123",
+		dependabotPRChecks:   []string{"ci/circleci: test", "Analyze (go)"},
+		dependabotBaseSHA:    "base456",
+		dependabotBaseChecks: []string{"ci/circleci: test", "Analyze (go)"},
+		// Note: "ci/circleci: new-job" is absent from both dep head AND dep base —
+		// it was added to main after the dep PR was opened.
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass for timing artefact (new check added after dep PR), got: %s", result.Detail)
 	}
 }
 
@@ -322,13 +376,17 @@ func TestRequiredStatusChecksCoherent_MultipleIssues(t *testing.T) {
 	// 1. "CodeQL" is stale (not on HEAD)
 	// 2. No Analyze (X) check (so CodeQL coverage missing)
 	// 3. "ci/circleci: test" is not on the Dependabot PR
+	// The dep PR base confirms "ci/circleci: test" existed when the PR was opened
+	// (it's a genuine Dependabot-unsatisfiable check, not a timing artefact).
 	server := coherentChecksServer(t, coherentChecksServerOpts{
-		requiredChecks:     []string{"CodeQL", "ci/circleci: test"},
-		headCheckRunNames:  []string{"Analyze (go)", "ci/circleci: test"},
-		languages:          map[string]int{"Go": 10000},
-		hasDependabotYML:   true,
-		dependabotPRSHA:    "dep123",
-		dependabotPRChecks: []string{"Analyze (go)"},
+		requiredChecks:       []string{"CodeQL", "ci/circleci: test"},
+		headCheckRunNames:    []string{"Analyze (go)", "ci/circleci: test"},
+		languages:            map[string]int{"Go": 10000},
+		hasDependabotYML:     true,
+		dependabotPRSHA:      "dep123",
+		dependabotPRChecks:   []string{"Analyze (go)"},
+		dependabotBaseSHA:    "base456",
+		dependabotBaseChecks: []string{"ci/circleci: test", "Analyze (go)"},
 	})
 	defer server.Close()
 

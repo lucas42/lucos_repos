@@ -640,10 +640,13 @@ func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, er
 
 // pullRequestEntry is a single PR from the GitHub pulls API.
 type pullRequestEntry struct {
-	Number int    `json:"number"`
+	Number int `json:"number"`
 	Head   struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Base struct {
+		SHA string `json:"sha"`
+	} `json:"base"`
 	User struct {
 		Login string `json:"login"`
 	} `json:"user"`
@@ -798,6 +801,126 @@ func GitHubRecentDependabotPRCheckNamesFromBase(baseURL, token, repo string) ([]
 				}
 			}
 			return names, nil
+		}
+	}
+
+	// No suitable Dependabot PR found.
+	return nil, nil
+}
+
+// DependabotPRInfo holds check names for both the head and base commits of a
+// recent Dependabot PR.  BaseCheckNames are the checks that ran on the
+// main-branch commit the PR was based on — used to distinguish timing
+// artefacts (check added to main after the dep PR was opened) from genuine
+// Dependabot-unsatisfiable checks (check structurally cannot run on PRs).
+// BaseCheckNames is nil when the base SHA is unavailable.
+type DependabotPRInfo struct {
+	HeadCheckNames []string
+	BaseCheckNames []string
+}
+
+// GitHubRecentDependabotPRInfoFromBase finds a recent PR authored by
+// dependabot[bot] (prefer closed/merged, then open) and returns check names
+// for both the head commit and the base commit (the main-branch SHA at the
+// time the PR was created). Returns (nil, nil) if no suitable Dependabot PR
+// is found or the API is unavailable.
+func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*DependabotPRInfo, error) {
+	// Prefer closed PRs (checks have had time to complete), then open.
+	for _, state := range []string{"closed", "open"} {
+		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=10", baseURL, repo, state)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build PR list request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub API request failed: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			continue
+		}
+
+		var prs []pullRequestEntry
+		err = json.NewDecoder(resp.Body).Decode(&prs)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode PR list response: %w", err)
+		}
+
+		// Filter to Dependabot-authored PRs.
+		for _, pr := range prs {
+			if pr.User.Login != "dependabot[bot]" {
+				continue
+			}
+			if pr.Head.SHA == "" {
+				continue
+			}
+
+			// Fetch check names for the PR head commit.
+			headCheckRuns, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, pr.Head.SHA)
+			if err != nil {
+				return nil, err
+			}
+			headStatusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, pr.Head.SHA)
+			if err != nil {
+				return nil, err
+			}
+
+			seen := make(map[string]bool)
+			var headNames []string
+			for _, name := range headCheckRuns {
+				if !seen[name] {
+					seen[name] = true
+					headNames = append(headNames, name)
+				}
+			}
+			for _, ctx := range headStatusContexts {
+				if !seen[ctx] {
+					seen[ctx] = true
+					headNames = append(headNames, ctx)
+				}
+			}
+
+			info := &DependabotPRInfo{HeadCheckNames: headNames}
+
+			// Fetch check names for the base commit (main at the time the PR
+			// was opened) if a base SHA is available.
+			if pr.Base.SHA != "" {
+				baseCheckRuns, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, pr.Base.SHA)
+				if err != nil {
+					return nil, err
+				}
+				baseStatusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, pr.Base.SHA)
+				if err != nil {
+					return nil, err
+				}
+
+				baseSeen := make(map[string]bool)
+				var baseNames []string
+				for _, name := range baseCheckRuns {
+					if !baseSeen[name] {
+						baseSeen[name] = true
+						baseNames = append(baseNames, name)
+					}
+				}
+				for _, ctx := range baseStatusContexts {
+					if !baseSeen[ctx] {
+						baseSeen[ctx] = true
+						baseNames = append(baseNames, ctx)
+					}
+				}
+				info.BaseCheckNames = baseNames
+			}
+
+			return info, nil
 		}
 	}
 
