@@ -14,8 +14,8 @@ import (
 
 type InfoResponse struct {
 	System         string            `json:"system"`
-	Checks         map[string]any    `json:"checks"`
-	Metrics        map[string]any    `json:"metrics"`
+	Checks         map[string]Check  `json:"checks"`
+	Metrics        map[string]Metric `json:"metrics"`
 	CI             map[string]string `json:"ci"`
 	Icon           string            `json:"icon"`
 	NetworkOnly    bool              `json:"network_only"`
@@ -28,6 +28,11 @@ type Check struct {
 	OK         bool   `json:"ok"`
 	TechDetail string `json:"techDetail"`
 	Debug      string `json:"debug,omitempty"`
+}
+
+type Metric struct {
+	Value      float64 `json:"value"`
+	TechDetail string  `json:"techDetail"`
 }
 
 func main() {
@@ -146,13 +151,6 @@ func main() {
 			dbCheck.Debug = dbErr.Error()
 		}
 
-		// Compute seconds since last audit sweep for the metrics field.
-		completedAt, _ := sweeper.Status()
-		var secondsSinceLastSweep *float64
-		if !completedAt.IsZero() {
-			secs := time.Since(completedAt).Seconds()
-			secondsSinceLastSweep = &secs
-		}
 
 		// Report stale unmerged Dependabot PRs.
 		prData := prSweeper.Data()
@@ -177,19 +175,26 @@ func main() {
 			)
 		}
 
-		metrics := map[string]any{}
-		if secondsSinceLastSweep != nil {
-			metrics["seconds_since_last_sweep"] = *secondsSinceLastSweep
+		// Compute seconds since last audit sweep for the metrics field.
+		completedAt, _ := sweeper.Status()
+		secondsSinceLastSweepMetric := Metric {
+			Value: -1,
+			TechDetail: "The number of seconds since an audit sweep was last completed.  (Minus one if it hasn't yet completed)",
+		}
+		if !completedAt.IsZero() {
+			secondsSinceLastSweepMetric.Value = time.Since(completedAt).Seconds()
 		}
 
 		info := InfoResponse{
 			System: system,
-			Checks: map[string]any{
+			Checks: map[string]Check {
 				"github-auth":          githubAuthCheck,
 				"database":             dbCheck,
 				"stale-dependabot-prs": staleDependabotCheck,
 			},
-			Metrics: metrics,
+			Metrics: map[string]Metric {
+				"seconds_since_last_sweep": secondsSinceLastSweepMetric,
+			},
 			CI: map[string]string{
 				"circle": "gh/lucas42/lucos_repos",
 			},
