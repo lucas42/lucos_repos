@@ -3,6 +3,7 @@ package conventions
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,13 +16,18 @@ type dependabotConfig struct {
 }
 
 type dependabotUpdate struct {
-	PackageEcosystem string           `yaml:"package-ecosystem"`
-	Directory        string           `yaml:"directory"`
-	Allow            []dependabotAllow `yaml:"allow"`
+	PackageEcosystem string                      `yaml:"package-ecosystem"`
+	Directory        string                      `yaml:"directory"`
+	Allow            []dependabotAllow            `yaml:"allow"`
+	Groups           map[string]dependabotGroup  `yaml:"groups"`
 }
 
 type dependabotAllow struct {
 	DependencyType string `yaml:"dependency-type"`
+}
+
+type dependabotGroup struct {
+	UpdateTypes []string `yaml:"update-types"`
 }
 
 func init() {
@@ -32,14 +38,21 @@ func init() {
 			"vulnerabilities. Supply chain attacks via GitHub Actions are a growing attack " +
 			"class, so keeping action versions up to date is critical. Allowing all dependency " +
 			"types keeps deps current so that when critical security patches land, they arrive " +
-			"on a well-maintained base rather than months of accumulated drift.",
+			"on a well-maintained base rather than months of accumulated drift. Grouping updates " +
+			"by type collapses the daily wave of individual Dependabot PRs into ~2 PRs per " +
+			"ecosystem, which reduces deploy-wave noise, CI concurrency saturation, and " +
+			"monitoring alert churn.",
 		Guidance: "Create or update `.github/dependabot.yml` to include:\n\n" +
 			"1. At least one entry with `package-ecosystem: github-actions` and `directory: /`\n" +
-			"2. An `allow` block with `dependency-type: all` on every update entry\n\n" +
+			"2. An `allow` block with `dependency-type: all` on every update entry\n" +
+			"3. A `groups` block on every update entry covering `minor`, `patch`, and `major`\n\n" +
 			"Example:\n```yaml\nversion: 2\nupdates:\n  - package-ecosystem: github-actions\n" +
 			"    directory: /\n    schedule:\n      interval: weekly\n    allow:\n" +
-			"      - dependency-type: all\n  - package-ecosystem: npm\n    directory: /\n" +
-			"    schedule:\n      interval: weekly\n    allow:\n      - dependency-type: all\n```",
+			"      - dependency-type: all\n    groups:\n      minor-and-patch:\n" +
+			"        update-types: [minor, patch]\n      major:\n        update-types: [major]\n" +
+			"  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n" +
+			"    allow:\n      - dependency-type: all\n    groups:\n      minor-and-patch:\n" +
+			"        update-types: [minor, patch]\n      major:\n        update-types: [major]\n```",
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
 			if base == "" {
@@ -98,6 +111,31 @@ func init() {
 				}
 				if !hasAllowAll {
 					issues = append(issues, fmt.Sprintf("%s (directory: %s) missing allow with dependency-type: all", u.PackageEcosystem, u.Directory))
+				}
+			}
+
+			// Check 4: every entry must have at least one group, and the groups must
+			// collectively cover minor, patch, and major update types.
+			requiredTypes := []string{"minor", "patch", "major"}
+			for _, u := range config.Updates {
+				if len(u.Groups) == 0 {
+					issues = append(issues, fmt.Sprintf("%s (directory: %s) missing groups block", u.PackageEcosystem, u.Directory))
+					continue
+				}
+				covered := make(map[string]bool)
+				for _, group := range u.Groups {
+					for _, ut := range group.UpdateTypes {
+						covered[ut] = true
+					}
+				}
+				var missing []string
+				for _, rt := range requiredTypes {
+					if !covered[rt] {
+						missing = append(missing, rt)
+					}
+				}
+				if len(missing) > 0 {
+					issues = append(issues, fmt.Sprintf("%s (directory: %s) groups do not cover update types: %s", u.PackageEcosystem, u.Directory, strings.Join(missing, ", ")))
 				}
 			}
 
