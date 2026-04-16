@@ -57,7 +57,38 @@ updates:
       interval: weekly
     allow:
       - dependency-type: all
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
   - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: all
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+`
+	server := dependabotServer(t, config)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "dependabot-configured").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass with fully valid config, got fail: %s", result.Detail)
+	}
+}
+
+func TestDependabotConfigured_NoGroups(t *testing.T) {
+	config := `
+version: 2
+updates:
+  - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
@@ -69,8 +100,68 @@ updates:
 
 	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
 	result := findConvention(t, "dependabot-configured").Check(repo)
-	if !result.Pass {
-		t.Errorf("expected pass with fully valid config, got fail: %s", result.Detail)
+	if result.Pass {
+		t.Error("expected fail when groups block is missing")
+	}
+	if !strings.Contains(result.Detail, "groups") {
+		t.Errorf("expected detail to mention groups, got: %s", result.Detail)
+	}
+}
+
+func TestDependabotConfigured_GroupsMissingMajor(t *testing.T) {
+	config := `
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: all
+    groups:
+      all-updates:
+        update-types: [minor, patch]
+`
+	server := dependabotServer(t, config)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "dependabot-configured").Check(repo)
+	if result.Pass {
+		t.Error("expected fail when groups do not cover major")
+	}
+	if !strings.Contains(result.Detail, "major") {
+		t.Errorf("expected detail to mention major, got: %s", result.Detail)
+	}
+}
+
+func TestDependabotConfigured_GroupsMissingMinorAndPatch(t *testing.T) {
+	config := `
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: all
+    groups:
+      major-only:
+        update-types: [major]
+`
+	server := dependabotServer(t, config)
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/lucos_test", GitHubToken: "fake", GitHubBaseURL: server.URL}
+	result := findConvention(t, "dependabot-configured").Check(repo)
+	if result.Pass {
+		t.Error("expected fail when groups do not cover minor and patch")
+	}
+	if !strings.Contains(result.Detail, "minor") {
+		t.Errorf("expected detail to mention minor, got: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "patch") {
+		t.Errorf("expected detail to mention patch, got: %s", result.Detail)
 	}
 }
 
