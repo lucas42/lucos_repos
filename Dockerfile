@@ -12,6 +12,8 @@ COPY src/ ./src/
 RUN go build -o lucos_repos ./src
 
 FROM debian:trixie-slim
+ARG VERSION
+ENV VERSION=$VERSION
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
