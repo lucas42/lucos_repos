@@ -41,6 +41,7 @@ const composeWithBuild = `
 services:
   app:
     build: .
+    image: lucas42/test_repo_app:${VERSION:-latest}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/_info"]
 `
@@ -51,10 +52,12 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
+    image: lucas42/test_repo_api:${VERSION:-latest}
   worker:
     build:
       context: .
       dockerfile: worker/Dockerfile
+    image: lucas42/test_repo_worker:${VERSION:-latest}
 `
 
 const goodDockerfile = `FROM python:3.12-slim
@@ -275,6 +278,7 @@ func TestDockerfileVersion_TestProfileServiceSkipped(t *testing.T) {
 services:
   app:
     build: .
+    image: lucas42/test_repo_app:${VERSION:-latest}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/_info"]
   test:
@@ -301,8 +305,10 @@ func TestDockerfileVersion_DuplicateDockerfileCheckedOnce(t *testing.T) {
 services:
   api:
     build: .
+    image: lucas42/test_repo_api:${VERSION:-latest}
   worker:
     build: .
+    image: lucas42/test_repo_worker:${VERSION:-latest}
 `
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +335,104 @@ services:
 	}
 	if callCount != 1 {
 		t.Errorf("expected Dockerfile to be fetched exactly once, got %d fetches", callCount)
+	}
+}
+
+// --- Image tag checks ---
+
+func TestDockerfileVersion_FailsMissingImageTag(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    image: lucas42/test_repo_app
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/_info"]
+`
+	server := serverWithFiles(map[string][]byte{
+		"/repos/lucas42/test_repo/contents/docker-compose.yml": composeFixture(compose),
+		"/repos/lucas42/test_repo/contents/Dockerfile":         dockerfileFixture(goodDockerfile),
+	})
+	defer server.Close()
+
+	result := findConvention(t, "dockerfile-exposes-version").Check(repoCtx(server))
+	if result.Pass {
+		t.Errorf("expected fail when image tag missing ${VERSION:-latest}, got pass")
+	}
+	if !strings.Contains(result.Detail, "${VERSION:-latest}") {
+		t.Errorf("expected detail to mention ${VERSION:-latest}, got: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "app") {
+		t.Errorf("expected detail to mention service name 'app', got: %s", result.Detail)
+	}
+}
+
+func TestDockerfileVersion_FailsNoImageField(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/_info"]
+`
+	server := serverWithFiles(map[string][]byte{
+		"/repos/lucas42/test_repo/contents/docker-compose.yml": composeFixture(compose),
+		"/repos/lucas42/test_repo/contents/Dockerfile":         dockerfileFixture(goodDockerfile),
+	})
+	defer server.Close()
+
+	result := findConvention(t, "dockerfile-exposes-version").Check(repoCtx(server))
+	if result.Pass {
+		t.Errorf("expected fail when image field absent, got pass")
+	}
+	if !strings.Contains(result.Detail, "${VERSION:-latest}") {
+		t.Errorf("expected detail to mention ${VERSION:-latest}, got: %s", result.Detail)
+	}
+}
+
+func TestDockerfileVersion_FailsImageTagLatestOnly(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    image: lucas42/test_repo_app:latest
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/_info"]
+`
+	server := serverWithFiles(map[string][]byte{
+		"/repos/lucas42/test_repo/contents/docker-compose.yml": composeFixture(compose),
+		"/repos/lucas42/test_repo/contents/Dockerfile":         dockerfileFixture(goodDockerfile),
+	})
+	defer server.Close()
+
+	result := findConvention(t, "dockerfile-exposes-version").Check(repoCtx(server))
+	if result.Pass {
+		t.Errorf("expected fail when image tag is bare :latest (not ${VERSION:-latest}), got pass")
+	}
+}
+
+func TestDockerfileVersion_TestProfileServiceImageTagNotChecked(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    image: lucas42/test_repo_app:${VERSION:-latest}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/_info"]
+  test:
+    build: .
+    profiles:
+      - test
+`
+	server := serverWithFiles(map[string][]byte{
+		"/repos/lucas42/test_repo/contents/docker-compose.yml": composeFixture(compose),
+		"/repos/lucas42/test_repo/contents/Dockerfile":         dockerfileFixture(goodDockerfile),
+	})
+	defer server.Close()
+
+	result := findConvention(t, "dockerfile-exposes-version").Check(repoCtx(server))
+	if !result.Pass {
+		t.Errorf("expected pass when test-profile service lacks image tag, got: %s", result.Detail)
 	}
 }
 
