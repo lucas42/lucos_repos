@@ -22,6 +22,7 @@ type composeFile struct {
 type composeService struct {
 	Build       interface{} `yaml:"build"`
 	Healthcheck interface{} `yaml:"healthcheck"`
+	Image       string      `yaml:"image"`
 	Profiles    []string    `yaml:"profiles"`
 }
 

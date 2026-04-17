@@ -70,9 +70,9 @@ func dockerfileExposesVersionEnv(content []byte) bool {
 func init() {
 	Register(Convention{
 		ID:          "dockerfile-exposes-version",
-		Description: "Every service Dockerfile declares ARG VERSION and exposes it as ENV VERSION=$VERSION",
-		Rationale:   "The deploy orb sets VERSION at build time via `VERSION=$NEXT_VERSION docker compose build`. For the running container to report its own version (e.g. via the `/_info` endpoint), the build arg must be declared with `ARG VERSION` and then persisted as an environment variable with `ENV VERSION=$VERSION`. Without both instructions, the VERSION variable is unavailable at runtime.",
-		Guidance:    "Add the following two lines to every service Dockerfile, after the FROM instruction and before the COPY/RUN steps:\n\n```dockerfile\nARG VERSION\nENV VERSION=$VERSION\n```\n\nNote that Docker build args are scoped — if your Dockerfile uses multi-stage builds, you may need to repeat `ARG VERSION` in each stage that needs it.",
+		Description: "Every built service Dockerfile declares ARG VERSION and ENV VERSION=$VERSION, and its docker-compose image: tag uses ${VERSION:-latest}",
+		Rationale:   "The deploy orb sets VERSION at build time via `VERSION=$NEXT_VERSION docker compose build`. For the running container to report its own version (e.g. via the `/_info` endpoint), the build arg must be declared with `ARG VERSION` and then persisted as an environment variable with `ENV VERSION=$VERSION`. For the built image to be pushed to Docker Hub with a versioned tag (e.g. `lucas42/lucos_foo:1.2.3`), the `image:` field in `docker-compose.yml` must also include `${VERSION:-latest}` as the tag. Without both the Dockerfile instructions and the compose image tag, versioned Docker Hub images are never produced and rollback is not possible.",
+		Guidance:    "Add the following two lines to every service Dockerfile, after the FROM instruction and before the COPY/RUN steps:\n\n```dockerfile\nARG VERSION\nENV VERSION=$VERSION\n```\n\nNote that Docker build args are scoped — if your Dockerfile uses multi-stage builds, you may need to repeat `ARG VERSION` in each stage that needs it.\n\nAlso add or update the `image:` field for every built service in `docker-compose.yml` to include `${VERSION:-latest}` as the tag:\n\n```yaml\nimage: lucas42/lucos_myservice_web:${VERSION:-latest}\n```\n\nThe `:-latest` default means `docker compose up` still works locally without setting VERSION, while the deploy orb's `VERSION=$NEXT_VERSION docker compose build` produces a properly versioned tag.",
 		AppliesTo:   []RepoType{RepoTypeSystem},
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
@@ -158,11 +158,22 @@ func init() {
 				}
 			}
 
-			if len(missingArg) == 0 && len(missingEnv) == 0 {
+			// Step 3: check that each built service's image: tag includes ${VERSION:-latest}.
+			var missingImageTag []string
+			for name, svc := range compose.Services {
+				if svc.Build == nil || isTestProfileService(svc) {
+					continue
+				}
+				if !strings.HasSuffix(svc.Image, ":${VERSION:-latest}") {
+					missingImageTag = append(missingImageTag, name)
+				}
+			}
+
+			if len(missingArg) == 0 && len(missingEnv) == 0 && len(missingImageTag) == 0 {
 				return ConventionResult{
 					Convention: "dockerfile-exposes-version",
 					Pass:       true,
-					Detail:     "All service Dockerfiles declare ARG VERSION and ENV VERSION=$VERSION",
+					Detail:     "All service Dockerfiles declare ARG VERSION and ENV VERSION=$VERSION, and all built services use ${VERSION:-latest} in their image tag",
 				}
 			}
 
@@ -172,6 +183,9 @@ func init() {
 			}
 			if len(missingEnv) > 0 {
 				parts = append(parts, fmt.Sprintf("missing ENV VERSION=$VERSION: %s", strings.Join(missingEnv, ", ")))
+			}
+			if len(missingImageTag) > 0 {
+				parts = append(parts, fmt.Sprintf("missing ${VERSION:-latest} image tag: %s", strings.Join(missingImageTag, ", ")))
 			}
 			return ConventionResult{
 				Convention: "dockerfile-exposes-version",
