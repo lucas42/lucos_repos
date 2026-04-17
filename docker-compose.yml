@@ -2,7 +2,7 @@ services:
   lucos_repos:
     build: .
     container_name: lucos_repos_app
-    image: lucas42/lucos_repos_app
+    image: lucas42/lucos_repos_app:${VERSION:-latest}
     ports:
       - ${PORT}:${PORT}
     environment:
