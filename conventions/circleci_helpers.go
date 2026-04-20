@@ -116,10 +116,11 @@ type ciJobFilters struct {
 // ciJobEntry represents a single entry in the jobs list of a workflow. In
 // CircleCI YAML, each entry is either a plain string (the job name) or a
 // mapping with a single key (the job name) and a value containing config
-// (including optional branch filters).
+// (including optional branch filters and serial-group).
 type ciJobEntry struct {
-	Name    string
-	Filters *ciJobFilters
+	Name        string
+	Filters     *ciJobFilters
+	SerialGroup string
 }
 
 // RunsOnBranch reports whether this job would run on the given branch based
@@ -184,9 +185,10 @@ func (e *ciJobEntry) UnmarshalYAML(value *yaml.Node) error {
 		}
 		e.Name = value.Content[0].Value
 
-		// Decode the job config value to extract filters.
+		// Decode the job config value to extract filters and serial-group.
 		type jobConfig struct {
-			Filters *ciJobFilters `yaml:"filters"`
+			Filters     *ciJobFilters `yaml:"filters"`
+			SerialGroup string        `yaml:"serial-group"`
 		}
 		var cfg jobConfig
 		if err := value.Content[1].Decode(&cfg); err != nil {
@@ -194,6 +196,7 @@ func (e *ciJobEntry) UnmarshalYAML(value *yaml.Node) error {
 			return nil
 		}
 		e.Filters = cfg.Filters
+		e.SerialGroup = cfg.SerialGroup
 		return nil
 	default:
 		return fmt.Errorf("unexpected YAML node kind %v for job entry", value.Kind)

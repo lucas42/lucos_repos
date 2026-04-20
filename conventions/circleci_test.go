@@ -19,7 +19,7 @@ func circleCIResponse(yaml string) []byte {
 	return body
 }
 
-// TestAll_HasCircleCIConventionsRegistered verifies all five CI conventions are present.
+// TestAll_HasCircleCIConventionsRegistered verifies all six CI conventions are present.
 func TestAll_HasCircleCIConventionsRegistered(t *testing.T) {
 	ids := []string{
 		"circleci-config-exists",
@@ -27,6 +27,7 @@ func TestAll_HasCircleCIConventionsRegistered(t *testing.T) {
 		"circleci-has-release-job",
 		"circleci-system-deploy-jobs",
 		"circleci-no-forbidden-jobs",
+		"circleci-deploy-serial-group",
 	}
 	all := All()
 	for _, id := range ids {
