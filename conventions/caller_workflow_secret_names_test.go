@@ -45,6 +45,24 @@ jobs:
       CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
 `
 
+const dependabotWithOldSecretNames = `name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  dependabot:
+    uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
+    secrets:
+      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
+      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+`
+
 const dependabotWithNewSecretNames = `name: Dependabot auto-merge
 
 on:
@@ -145,8 +163,7 @@ func TestCallerWorkflowSecretNames_DependabotOldNames(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
-			// validDependabotAutoMergeYAML uses CODE_REVIEWER_* names.
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
+			w.Write([]byte(encodeWorkflowContent(dependabotWithOldSecretNames)))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -205,7 +222,7 @@ func TestCallerWorkflowSecretNames_BothWorkflowsOldNames(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
+			w.Write([]byte(encodeWorkflowContent(dependabotWithOldSecretNames)))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -268,7 +285,7 @@ func TestCallerWorkflowSecretNames_ScriptRepo(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
-			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
+			w.Write([]byte(encodeWorkflowContent(dependabotWithOldSecretNames)))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

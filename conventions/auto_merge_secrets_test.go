@@ -20,8 +20,8 @@ jobs:
   reusable:
     uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@main
     secrets:
-      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
-      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+      LUCOS_CI_APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}
+      LUCOS_CI_PRIVATE_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
 `
 
 const codeReviewerMissingSecrets = `name: Auto-merge on code reviewer approval
@@ -47,7 +47,7 @@ jobs:
   reusable:
     uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@main
     secrets:
-      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
+      LUCOS_CI_APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}
 `
 
 // TestAutoMergeSecrets_BothSecretsPresent verifies that a workflow that passes
