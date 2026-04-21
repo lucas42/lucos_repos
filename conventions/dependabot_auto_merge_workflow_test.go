@@ -27,8 +27,8 @@ jobs:
   dependabot:
     uses: lucas42/.github/.github/workflows/reusable-dependabot-auto-merge.yml@main
     secrets:
-      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
-      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+      LUCOS_CI_APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}
+      LUCOS_CI_PRIVATE_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
 `
 
 const oldPullRequestTargetYAML = `name: Dependabot auto-merge
@@ -64,8 +64,8 @@ jobs:
       - run: gh pr merge --auto --merge "$PR_URL"
 `
 
-const repoSecretsJSON = `{"total_count":2,"secrets":[{"name":"CODE_REVIEWER_APP_ID"},{"name":"CODE_REVIEWER_PRIVATE_KEY"}]}`
-const repoSecretsMissingPrivateKeyJSON = `{"total_count":1,"secrets":[{"name":"CODE_REVIEWER_APP_ID"}]}`
+const repoSecretsJSON = `{"total_count":2,"secrets":[{"name":"LUCOS_CI_APP_ID"},{"name":"LUCOS_CI_PRIVATE_KEY"}]}`
+const repoSecretsMissingPrivateKeyJSON = `{"total_count":1,"secrets":[{"name":"LUCOS_CI_APP_ID"}]}`
 const repoSecretsEmptyJSON = `{"total_count":0,"secrets":[]}`
 
 // bothStoresHandler returns a handler that serves the given Actions and

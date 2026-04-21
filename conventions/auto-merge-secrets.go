@@ -8,16 +8,16 @@ import (
 
 func init() {
 	// auto-merge-secrets: any repo with a code-reviewer auto-merge workflow must
-	// reference both CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY in the
+	// reference both LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY in the
 	// workflow file. The reusable workflow declares them as required secrets; if
 	// the caller doesn't pass them, the reusable job fails at startup.
 	// The dependabot auto-merge workflow uses GITHUB_TOKEN only and does not
 	// require these secrets.
 	Register(Convention{
 		ID:          "auto-merge-secrets",
-		Description: "Repos with a code-reviewer auto-merge workflow pass CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY to the reusable workflow and have both configured as Actions secrets on the repo",
-		Rationale:   "The code-reviewer auto-merge reusable workflow declares CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY as required secrets. If the caller workflow doesn't pass them, the reusable job fails at startup — auto-merge never runs and there is no obvious error signal. On 2026-03-19, 33 out of 39 repos were found to have the workflow file but not the secrets, causing silent auto-merge failures.",
-		Guidance:    "Ensure the `.github/workflows/code-reviewer-auto-merge.yml` workflow passes both secrets to the reusable workflow:\n\n```yaml\njobs:\n  reusable:\n    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@<commit-sha>\n    secrets:\n      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}\n      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}\n```\n\nYou also need to ensure `CODE_REVIEWER_APP_ID` and `CODE_REVIEWER_PRIVATE_KEY` are set as Actions secrets on this repository. Ask lucos-site-reliability or lucos-system-administrator to set them.",
+		Description: "Repos with a code-reviewer auto-merge workflow pass LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY to the reusable workflow and have both configured as Actions secrets on the repo",
+		Rationale:   "The code-reviewer auto-merge reusable workflow declares LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY as required secrets (migrated from CODE_REVIEWER_* in v1.15.0). If the caller workflow doesn't pass them, the reusable job fails at startup — auto-merge never runs and there is no obvious error signal.",
+		Guidance:    "Ensure the `.github/workflows/code-reviewer-auto-merge.yml` workflow passes both secrets to the reusable workflow:\n\n```yaml\njobs:\n  reusable:\n    uses: lucas42/.github/.github/workflows/code-reviewer-auto-merge.yml@<commit-sha>\n    secrets:\n      LUCOS_CI_APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}\n      LUCOS_CI_PRIVATE_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}\n```\n\nYou also need to ensure `LUCOS_CI_APP_ID` and `LUCOS_CI_PRIVATE_KEY` are set as Actions secrets on this repository. Ask lucos-system-administrator to set them.",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself, not a caller.
@@ -50,15 +50,15 @@ func init() {
 			}
 
 			contentStr := string(content)
-			hasAppID := strings.Contains(contentStr, "secrets.CODE_REVIEWER_APP_ID")
-			hasPrivateKey := strings.Contains(contentStr, "secrets.CODE_REVIEWER_PRIVATE_KEY")
+			hasAppID := strings.Contains(contentStr, "secrets.LUCOS_CI_APP_ID")
+			hasPrivateKey := strings.Contains(contentStr, "secrets.LUCOS_CI_PRIVATE_KEY")
 
 			var missingFromFile []string
 			if !hasAppID {
-				missingFromFile = append(missingFromFile, "CODE_REVIEWER_APP_ID")
+				missingFromFile = append(missingFromFile, "LUCOS_CI_APP_ID")
 			}
 			if !hasPrivateKey {
-				missingFromFile = append(missingFromFile, "CODE_REVIEWER_PRIVATE_KEY")
+				missingFromFile = append(missingFromFile, "LUCOS_CI_PRIVATE_KEY")
 			}
 			if len(missingFromFile) > 0 {
 				return ConventionResult{
@@ -84,11 +84,11 @@ func init() {
 				secretSet[name] = true
 			}
 			var missingFromRepo []string
-			if !secretSet["CODE_REVIEWER_APP_ID"] {
-				missingFromRepo = append(missingFromRepo, "CODE_REVIEWER_APP_ID")
+			if !secretSet["LUCOS_CI_APP_ID"] {
+				missingFromRepo = append(missingFromRepo, "LUCOS_CI_APP_ID")
 			}
-			if !secretSet["CODE_REVIEWER_PRIVATE_KEY"] {
-				missingFromRepo = append(missingFromRepo, "CODE_REVIEWER_PRIVATE_KEY")
+			if !secretSet["LUCOS_CI_PRIVATE_KEY"] {
+				missingFromRepo = append(missingFromRepo, "LUCOS_CI_PRIVATE_KEY")
 			}
 			if len(missingFromRepo) > 0 {
 				return ConventionResult{
@@ -101,7 +101,7 @@ func init() {
 			return ConventionResult{
 				Convention: "auto-merge-secrets",
 				Pass:       true,
-				Detail:     "code-reviewer-auto-merge.yml passes CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY to the reusable workflow",
+				Detail:     "code-reviewer-auto-merge.yml passes LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY to the reusable workflow",
 			}
 		},
 	})

@@ -16,9 +16,9 @@ func init() {
 	// workflow in lucas42/.github.
 	Register(Convention{
 		ID:          "dependabot-auto-merge-workflow",
-		Description: "Repository has a Dependabot auto-merge workflow that references the shared reusable workflow with CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY configured as both Actions secrets and Dependabot secrets",
+		Description: "Repository has a Dependabot auto-merge workflow that references the shared reusable workflow with LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY configured as both Actions secrets and Dependabot secrets",
 		Rationale:   "Without auto-merge configured, Dependabot PRs pile up and require manual merging. The shared reusable workflow ensures consistent auto-merge behaviour across all repos. Repos that implement their own logic drift from the standard and may miss security fixes applied to the central workflow.",
-		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\n\npermissions:\n  pull-requests: write\n  contents: write\n\njobs:\n  dependabot:\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@<commit-sha>\n    secrets:\n      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}\n      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}\n```\n\nNote: use `pull_request` (not `pull_request_target`) and include the top-level `permissions:` block. Using `pull_request_target` with a reusable workflow call causes `startup_failure` on every non-Dependabot PR. Do not use `secrets: inherit`. The `CODE_REVIEWER_APP_ID` and `CODE_REVIEWER_PRIVATE_KEY` secrets must be configured in **both** the Actions secret store and the Dependabot secret store (Settings → Security → Secrets and variables). GitHub only exposes Dependabot secrets — not Actions secrets — when a Dependabot PR triggers the workflow. Without them in the Dependabot store, the reusable workflow falls back to GITHUB_TOKEN, which suppresses push events and breaks CodeQL required status checks.",
+		Guidance:    "Add a `.github/workflows/dependabot-auto-merge.yml` file that calls the shared reusable workflow:\n\n```yaml\nname: Dependabot auto-merge\n\non:\n  pull_request:\n    types: [opened, synchronize, reopened]\n\npermissions:\n  pull-requests: write\n  contents: write\n\njobs:\n  dependabot:\n    uses: lucas42/.github/.github/workflows/dependabot-auto-merge.yml@<commit-sha>\n    secrets:\n      LUCOS_CI_APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}\n      LUCOS_CI_PRIVATE_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}\n```\n\nNote: use `pull_request` (not `pull_request_target`) and include the top-level `permissions:` block. Using `pull_request_target` with a reusable workflow call causes `startup_failure` on every non-Dependabot PR. Do not use `secrets: inherit`. The `LUCOS_CI_APP_ID` and `LUCOS_CI_PRIVATE_KEY` secrets must be configured in **both** the Actions secret store and the Dependabot secret store (Settings → Security → Secrets and variables). GitHub only exposes Dependabot secrets — not Actions secrets — when a Dependabot PR triggers the workflow. Without them in the Dependabot store, the reusable workflow falls back to GITHUB_TOKEN, which suppresses push events and breaks CodeQL required status checks.",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent, RepoTypeScript},
 		ExcludeRepos: []string{
 			// The .github repo defines the reusable workflow itself — it cannot
@@ -93,7 +93,7 @@ func init() {
 				return ConventionResult{
 					Convention: "dependabot-auto-merge-workflow",
 					Pass:       false,
-					Detail:     fmt.Sprintf("%s uses secrets: inherit — explicitly enumerate CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY instead", foundFilename),
+					Detail:     fmt.Sprintf("%s uses secrets: inherit — explicitly enumerate LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY instead", foundFilename),
 				}
 			}
 
@@ -107,22 +107,22 @@ func init() {
 				}
 			}
 
-			// The caller must pass CODE_REVIEWER_APP_ID and CODE_REVIEWER_PRIVATE_KEY
+			// The caller must pass LUCOS_CI_APP_ID and LUCOS_CI_PRIVATE_KEY
 			// to the reusable workflow. Without them the reusable workflow falls back to
 			// GITHUB_TOKEN, which suppresses push events and breaks CodeQL required status checks.
-			if !strings.Contains(contentStr, "CODE_REVIEWER_APP_ID") {
+			if !strings.Contains(contentStr, "LUCOS_CI_APP_ID") {
 				return ConventionResult{
 					Convention: "dependabot-auto-merge-workflow",
 					Pass:       false,
-					Detail:     fmt.Sprintf("%s is missing CODE_REVIEWER_APP_ID in its secrets block — required to avoid GITHUB_TOKEN fallback which suppresses push events and breaks CodeQL required status checks", foundFilename),
+					Detail:     fmt.Sprintf("%s is missing LUCOS_CI_APP_ID in its secrets block — required to avoid GITHUB_TOKEN fallback which suppresses push events and breaks CodeQL required status checks", foundFilename),
 				}
 			}
 
-			if !strings.Contains(contentStr, "CODE_REVIEWER_PRIVATE_KEY") {
+			if !strings.Contains(contentStr, "LUCOS_CI_PRIVATE_KEY") {
 				return ConventionResult{
 					Convention: "dependabot-auto-merge-workflow",
 					Pass:       false,
-					Detail:     fmt.Sprintf("%s is missing CODE_REVIEWER_PRIVATE_KEY in its secrets block — required to avoid GITHUB_TOKEN fallback which suppresses push events and breaks CodeQL required status checks", foundFilename),
+					Detail:     fmt.Sprintf("%s is missing LUCOS_CI_PRIVATE_KEY in its secrets block — required to avoid GITHUB_TOKEN fallback which suppresses push events and breaks CodeQL required status checks", foundFilename),
 				}
 			}
 
@@ -143,11 +143,11 @@ func init() {
 				actionsSecretSet[name] = true
 			}
 			var missingActionsSecrets []string
-			if !actionsSecretSet["CODE_REVIEWER_APP_ID"] {
-				missingActionsSecrets = append(missingActionsSecrets, "CODE_REVIEWER_APP_ID")
+			if !actionsSecretSet["LUCOS_CI_APP_ID"] {
+				missingActionsSecrets = append(missingActionsSecrets, "LUCOS_CI_APP_ID")
 			}
-			if !actionsSecretSet["CODE_REVIEWER_PRIVATE_KEY"] {
-				missingActionsSecrets = append(missingActionsSecrets, "CODE_REVIEWER_PRIVATE_KEY")
+			if !actionsSecretSet["LUCOS_CI_PRIVATE_KEY"] {
+				missingActionsSecrets = append(missingActionsSecrets, "LUCOS_CI_PRIVATE_KEY")
 			}
 			if len(missingActionsSecrets) > 0 {
 				return ConventionResult{
@@ -175,11 +175,11 @@ func init() {
 				dependabotSecretSet[name] = true
 			}
 			var missingDependabotSecrets []string
-			if !dependabotSecretSet["CODE_REVIEWER_APP_ID"] {
-				missingDependabotSecrets = append(missingDependabotSecrets, "CODE_REVIEWER_APP_ID")
+			if !dependabotSecretSet["LUCOS_CI_APP_ID"] {
+				missingDependabotSecrets = append(missingDependabotSecrets, "LUCOS_CI_APP_ID")
 			}
-			if !dependabotSecretSet["CODE_REVIEWER_PRIVATE_KEY"] {
-				missingDependabotSecrets = append(missingDependabotSecrets, "CODE_REVIEWER_PRIVATE_KEY")
+			if !dependabotSecretSet["LUCOS_CI_PRIVATE_KEY"] {
+				missingDependabotSecrets = append(missingDependabotSecrets, "LUCOS_CI_PRIVATE_KEY")
 			}
 			if len(missingDependabotSecrets) > 0 {
 				return ConventionResult{
