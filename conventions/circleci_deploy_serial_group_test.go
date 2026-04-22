@@ -19,6 +19,7 @@ workflows:
       - lucos/build-amd64:
           serial-group: << pipeline.project.slug >>/build
       - lucos/deploy-avalon:
+          serial-group: deploy-avalon
           requires:
             - lucos/build-amd64
 `
@@ -43,9 +44,47 @@ workflows:
 	}
 }
 
-// TestCircleCIDeploySerialGroup_FailsWhenMissing verifies the convention fails
-// when the build job has no serial-group.
-func TestCircleCIDeploySerialGroup_FailsWhenMissing(t *testing.T) {
+// TestCircleCIDeploySerialGroup_PassesWithNewBuildJob verifies the convention
+// passes when using the new parameterised lucos/build job.
+func TestCircleCIDeploySerialGroup_PassesWithNewBuildJob(t *testing.T) {
+	yaml := `
+version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build:
+    jobs:
+      - lucos/build:
+          serial-group: << pipeline.project.slug >>/build
+      - lucos/deploy-avalon:
+          serial-group: deploy-avalon
+          requires:
+            - lucos/build
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write(circleCIResponse(yaml))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass, got fail: %s", result.Detail)
+	}
+}
+
+// TestCircleCIDeploySerialGroup_FailsWhenBuildMissing verifies the convention
+// fails when the build job has no serial-group.
+func TestCircleCIDeploySerialGroup_FailsWhenBuildMissing(t *testing.T) {
 	yaml := `
 version: 2.1
 orbs:
@@ -55,6 +94,7 @@ workflows:
     jobs:
       - lucos/build-amd64
       - lucos/deploy-avalon:
+          serial-group: deploy-avalon
           requires:
             - lucos/build-amd64
 `
@@ -79,9 +119,9 @@ workflows:
 	}
 }
 
-// TestCircleCIDeploySerialGroup_FailsWhenWrongValue verifies the convention
+// TestCircleCIDeploySerialGroup_FailsWhenBuildWrongValue verifies the convention
 // fails when serial-group is set to a non-standard value.
-func TestCircleCIDeploySerialGroup_FailsWhenWrongValue(t *testing.T) {
+func TestCircleCIDeploySerialGroup_FailsWhenBuildWrongValue(t *testing.T) {
 	yaml := `
 version: 2.1
 orbs:
@@ -91,6 +131,81 @@ workflows:
     jobs:
       - lucos/build-amd64:
           serial-group: my-custom-group
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write(circleCIResponse(yaml))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail, got pass: %s", result.Detail)
+	}
+}
+
+// TestCircleCIDeploySerialGroup_FailsWhenDeployMissing verifies the convention
+// fails when a deploy job has no serial-group.
+func TestCircleCIDeploySerialGroup_FailsWhenDeployMissing(t *testing.T) {
+	yaml := `
+version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build:
+    jobs:
+      - lucos/build:
+          serial-group: << pipeline.project.slug >>/build
+      - lucos/deploy-avalon:
+          requires:
+            - lucos/build
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write(circleCIResponse(yaml))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail, got pass: %s", result.Detail)
+	}
+}
+
+// TestCircleCIDeploySerialGroup_FailsWhenDeployHasOldProjectSlugFormat verifies
+// the convention fails when a deploy job uses the old project-slug-prefixed format.
+func TestCircleCIDeploySerialGroup_FailsWhenDeployHasOldProjectSlugFormat(t *testing.T) {
+	yaml := `
+version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build:
+    jobs:
+      - lucos/build:
+          serial-group: << pipeline.project.slug >>/build
+      - lucos/deploy-avalon:
+          serial-group: << pipeline.project.slug >>/deploy-avalon
+          requires:
+            - lucos/build
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
@@ -170,6 +285,48 @@ workflows:
 	repo := RepoContext{
 		Name:          "lucas42/lucos_navbar",
 		Type:          RepoTypeComponent,
+		GitHubBaseURL: server.URL,
+	}
+	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass, got fail: %s", result.Detail)
+	}
+}
+
+// TestCircleCIDeploySerialGroup_PassesMultipleDeployHosts verifies the convention
+// passes when multiple deploy jobs each have the correct host-specific serial-group.
+func TestCircleCIDeploySerialGroup_PassesMultipleDeployHosts(t *testing.T) {
+	yaml := `
+version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build:
+    jobs:
+      - lucos/build:
+          serial-group: << pipeline.project.slug >>/build
+      - lucos/deploy-avalon:
+          serial-group: deploy-avalon
+          requires:
+            - lucos/build
+      - lucos/deploy-xwing:
+          serial-group: deploy-xwing
+          requires:
+            - lucos/build
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write(circleCIResponse(yaml))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos",
+		Type:          RepoTypeSystem,
 		GitHubBaseURL: server.URL,
 	}
 	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
