@@ -109,8 +109,9 @@ type PRSweeper struct {
 	githubAPIBase   string
 	sweepInterval   time.Duration
 
-	mu   sync.RWMutex
-	data PRDashboardData
+	mu              sync.RWMutex
+	data            PRDashboardData
+	sweepInProgress bool
 }
 
 // NewPRSweeper creates a new PRSweeper.
@@ -126,13 +127,27 @@ func NewPRSweeper(githubAuth *GitHubAuthClient) *PRSweeper {
 // Start begins the periodic PR sweep.
 func (p *PRSweeper) Start() {
 	go func() {
-		p.runSweep()
+		p.TriggerSweep()
 		ticker := time.NewTicker(p.sweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			p.runSweep()
+			p.TriggerSweep()
 		}
 	}()
+}
+
+// TriggerSweep starts a PR sweep in a background goroutine.
+// It returns true if the sweep was started, or false if one is already in progress.
+func (p *PRSweeper) TriggerSweep() bool {
+	p.mu.Lock()
+	if p.sweepInProgress {
+		p.mu.Unlock()
+		return false
+	}
+	p.sweepInProgress = true
+	p.mu.Unlock()
+	go p.runSweep()
+	return true
 }
 
 // Data returns the current PR dashboard data.
@@ -143,6 +158,12 @@ func (p *PRSweeper) Data() PRDashboardData {
 }
 
 func (p *PRSweeper) runSweep() {
+	defer func() {
+		p.mu.Lock()
+		p.sweepInProgress = false
+		p.mu.Unlock()
+	}()
+
 	slog.Info("PR sweep starting")
 	start := time.Now()
 
