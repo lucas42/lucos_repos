@@ -57,6 +57,7 @@ type gitHubRepo struct {
 // scheduleTrackerPayload is the JSON body sent to the schedule tracker endpoint.
 type scheduleTrackerPayload struct {
 	System    string `json:"system"`
+	JobName   string `json:"job_name"`
 	Frequency int    `json:"frequency"`
 	Status    string `json:"status"`
 	Message   string `json:"message,omitempty"`
@@ -169,6 +170,7 @@ func (s *AuditSweeper) reportToScheduleTracker(status, message string) {
 	}
 	payload := scheduleTrackerPayload{
 		System:    s.system,
+		JobName:   "audit",
 		Frequency: int(s.sweepInterval.Seconds()),
 		Status:    status,
 		Message:   message,
