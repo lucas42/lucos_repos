@@ -649,7 +649,7 @@ func TestSweeper_Status_BeforeFirstSweep(t *testing.T) {
 func TestReportToScheduleTracker_Success(t *testing.T) {
 	var received scheduleTrackerPayload
 	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/report-status" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v2/report-status" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -665,7 +665,7 @@ func TestReportToScheduleTracker_Success(t *testing.T) {
 	s := &AuditSweeper{
 		system:                  "lucos_repos",
 		sweepInterval:           6 * time.Hour,
-		scheduleTrackerEndpoint: trackerServer.URL + "/report-status",
+		scheduleTrackerEndpoint: trackerServer.URL + "/v2/report-status",
 	}
 	s.reportToScheduleTracker("success", "")
 
@@ -681,6 +681,9 @@ func TestReportToScheduleTracker_Success(t *testing.T) {
 	if received.Message != "" {
 		t.Errorf("expected empty message for success, got %q", received.Message)
 	}
+	if received.JobName != "audit" {
+		t.Errorf("expected job_name %q, got %q", "audit", received.JobName)
+	}
 }
 
 // TestReportToScheduleTracker_Error verifies a failed sweep posts to the
@@ -688,7 +691,7 @@ func TestReportToScheduleTracker_Success(t *testing.T) {
 func TestReportToScheduleTracker_Error(t *testing.T) {
 	var received scheduleTrackerPayload
 	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/report-status" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v2/report-status" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -704,7 +707,7 @@ func TestReportToScheduleTracker_Error(t *testing.T) {
 	s := &AuditSweeper{
 		system:                  "lucos_repos",
 		sweepInterval:           6 * time.Hour,
-		scheduleTrackerEndpoint: trackerServer.URL + "/report-status",
+		scheduleTrackerEndpoint: trackerServer.URL + "/v2/report-status",
 	}
 	s.reportToScheduleTracker("error", "failed to get GitHub token: some auth error")
 
@@ -713,6 +716,9 @@ func TestReportToScheduleTracker_Error(t *testing.T) {
 	}
 	if received.Message != "failed to get GitHub token: some auth error" {
 		t.Errorf("expected error message, got %q", received.Message)
+	}
+	if received.JobName != "audit" {
+		t.Errorf("expected job_name %q, got %q", "audit", received.JobName)
 	}
 }
 
