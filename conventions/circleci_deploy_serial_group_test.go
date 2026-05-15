@@ -7,7 +7,7 @@ import (
 )
 
 // TestCircleCIDeploySerialGroup_PassesWithSerialGroup verifies the convention
-// passes when the build job has the required serial-group set.
+// passes when the build job has the required branch-scoped serial-group set.
 func TestCircleCIDeploySerialGroup_PassesWithSerialGroup(t *testing.T) {
 	yaml := `
 version: 2.1
@@ -17,7 +17,7 @@ workflows:
   build:
     jobs:
       - lucos/build-amd64:
-          serial-group: << pipeline.project.slug >>/build
+          serial-group: << pipeline.project.slug >>/build/<< pipeline.git.branch >>
       - lucos/deploy-avalon:
           serial-group: deploy-avalon
           requires:
@@ -45,7 +45,7 @@ workflows:
 }
 
 // TestCircleCIDeploySerialGroup_PassesWithNewBuildJob verifies the convention
-// passes when using the new parameterised lucos/build job.
+// passes when using the new parameterised lucos/build job with branch-scoped serial-group.
 func TestCircleCIDeploySerialGroup_PassesWithNewBuildJob(t *testing.T) {
 	yaml := `
 version: 2.1
@@ -55,7 +55,7 @@ workflows:
   build:
     jobs:
       - lucos/build:
-          serial-group: << pipeline.project.slug >>/build
+          serial-group: << pipeline.project.slug >>/build/<< pipeline.git.branch >>
       - lucos/deploy-avalon:
           serial-group: deploy-avalon
           requires:
@@ -117,6 +117,44 @@ workflows:
 	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
 	if !result.Pass {
 		t.Errorf("expected pass, got fail: %s", result.Detail)
+	}
+}
+
+// TestCircleCIDeploySerialGroup_FailsWithLegacySerialGroup verifies the convention
+// fails when the build job uses the legacy repo-wide form without branch scoping.
+func TestCircleCIDeploySerialGroup_FailsWithLegacySerialGroup(t *testing.T) {
+	yaml := `
+version: 2.1
+orbs:
+  lucos: lucos/deploy@0
+workflows:
+  build:
+    jobs:
+      - lucos/build:
+          serial-group: << pipeline.project.slug >>/build
+      - lucos/deploy-avalon:
+          serial-group: deploy-avalon
+          requires:
+            - lucos/build
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/lucas42/lucos_photos/contents/.circleci/config.yml" {
+			w.WriteHeader(http.StatusOK)
+			w.Write(circleCIResponse(yaml))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/lucos_photos",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+	result := findConvention(t, "circleci-deploy-serial-group").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail for legacy serial-group, got pass: %s", result.Detail)
 	}
 }
 
@@ -202,7 +240,7 @@ workflows:
   build:
     jobs:
       - lucos/build:
-          serial-group: << pipeline.project.slug >>/build
+          serial-group: << pipeline.project.slug >>/build/<< pipeline.git.branch >>
       - lucos/deploy-avalon:
           requires:
             - lucos/build
@@ -239,7 +277,7 @@ workflows:
   build:
     jobs:
       - lucos/build:
-          serial-group: << pipeline.project.slug >>/build
+          serial-group: << pipeline.project.slug >>/build/<< pipeline.git.branch >>
       - lucos/deploy-avalon:
           serial-group: << pipeline.project.slug >>/deploy-avalon
           requires:
@@ -305,7 +343,7 @@ workflows:
   build:
     jobs:
       - lucos/build-amd64:
-          serial-group: << pipeline.project.slug >>/build
+          serial-group: << pipeline.project.slug >>/build/<< pipeline.git.branch >>
       - lucos/release-npm:
           requires:
             - lucos/build-amd64
@@ -342,7 +380,7 @@ workflows:
   build:
     jobs:
       - lucos/build:
-          serial-group: << pipeline.project.slug >>/build
+          serial-group: << pipeline.project.slug >>/build/<< pipeline.git.branch >>
       - lucos/deploy-avalon:
           serial-group: deploy-avalon
           requires:

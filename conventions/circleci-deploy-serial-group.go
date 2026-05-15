@@ -58,15 +58,13 @@ func init() {
 				}
 			}
 
-			// Accept both the branch-scoped form (preferred) and the legacy repo-wide form.
-			const wantBuildSerialGroupBranch = "<< pipeline.project.slug >>/build/<< pipeline.git.branch >>"
-			const wantBuildSerialGroupLegacy = "<< pipeline.project.slug >>/build"
+			const wantBuildSerialGroup = "<< pipeline.project.slug >>/build/<< pipeline.git.branch >>"
 			var missingBuild []string
 			var missingDeploy []string
 
 			for _, entry := range allJobEntries(cfg) {
 				if strings.HasPrefix(entry.Name, "lucos/build") {
-					if entry.SerialGroup != wantBuildSerialGroupBranch && entry.SerialGroup != wantBuildSerialGroupLegacy {
+					if entry.SerialGroup != wantBuildSerialGroup {
 						missingBuild = append(missingBuild, entry.Name)
 					}
 				} else if strings.HasPrefix(entry.Name, "lucos/deploy-") {
@@ -82,7 +80,7 @@ func init() {
 			if len(missingBuild) > 0 {
 				problems = append(problems, fmt.Sprintf(
 					"build job(s) missing `serial-group: %s`: %s",
-					wantBuildSerialGroupBranch, strings.Join(missingBuild, ", "),
+					wantBuildSerialGroup, strings.Join(missingBuild, ", "),
 				))
 			}
 			if len(missingDeploy) > 0 {
