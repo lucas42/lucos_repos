@@ -17,8 +17,18 @@ const requiredForkPRPolicy = "first_time_contributors_new_to_github"
 
 // forkPRContributorApprovalResponse is the response from the GitHub Actions
 // fork pull request contributor approval API.
+//
+// Real API response shape (verified against GitHub docs at
+// https://docs.github.com/rest/actions/permissions#get-fork-pr-contributor-approval-permissions-for-a-repository):
+//
+//	{"approval_policy": "first_time_contributors_new_to_github"}
+//
+// The JSON field is "approval_policy" — NOT "fork-pr-contributor-approval"
+// (which is the URL path segment). Mixing these up causes silent empty-string
+// decodes; update the test fixtures in fork_pr_contributor_approval_test.go
+// when changing this struct.
 type forkPRContributorApprovalResponse struct {
-	ForkPRContributorApproval string `json:"fork-pr-contributor-approval"`
+	ApprovalPolicy string `json:"approval_policy"`
 }
 
 // GitHubForkPRContributorApproval fetches the fork pull request contributor
@@ -55,7 +65,13 @@ func GitHubForkPRContributorApprovalFromBase(baseURL, token, repo string) (strin
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return "", fmt.Errorf("failed to decode fork-pr-contributor-approval response for %s: %w", repo, err)
 		}
-		return result.ForkPRContributorApproval, nil
+		// Guard against silent empty-string decodes caused by a JSON field name
+		// mismatch. If the API response shape has changed, treat it as an error
+		// (incomplete sweep) rather than silently failing every repo.
+		if result.ApprovalPolicy == "" {
+			return "", fmt.Errorf("fork-pr-contributor-approval response for %s had an empty approval_policy field — API response shape may have changed", repo)
+		}
+		return result.ApprovalPolicy, nil
 	default:
 		return "", fmt.Errorf("unexpected GitHub API status %d fetching fork-pr-contributor-approval for %s", resp.StatusCode, repo)
 	}
