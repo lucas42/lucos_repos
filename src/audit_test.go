@@ -483,6 +483,9 @@ func TestSweep_StoresFindings(t *testing.T) {
 		case "/repos/lucas42/lucos_photos/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(encodedCIConfig()))
+		case "/repos/lucas42/lucos_photos/actions/permissions/fork-pr-contributor-approval":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"approval_policy":"first_time_contributors_new_to_github"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -565,6 +568,9 @@ func TestSweep_FailingConventionCreatesIssue(t *testing.T) {
 			// File does not exist — conventions fail.
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"message":"Not Found"}`))
+		case r.URL.Path == "/repos/lucas42/lucos_missing/actions/permissions/fork-pr-contributor-approval":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"approval_policy":"first_time_contributors_new_to_github"}`))
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/lucas42/lucos_missing/issues"):
 			// No existing issues.
 			json.NewEncoder(w).Encode([]gitHubIssue{})
@@ -874,6 +880,9 @@ func TestSweep_FullSuccessReturnsNil(t *testing.T) {
 		case "/repos/lucas42/lucos_clean/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(encodedCIConfig()))
+		case "/repos/lucas42/lucos_clean/actions/permissions/fork-pr-contributor-approval":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"approval_policy":"first_time_contributors_new_to_github"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1023,6 +1032,9 @@ func TestSweep_DeletesStaleFindings(t *testing.T) {
 		case r.URL.Path == "/repos/lucas42/lucos_active/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(encodedCIConfig()))
+		case r.URL.Path == "/repos/lucas42/lucos_active/actions/permissions/fork-pr-contributor-approval":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"approval_policy":"first_time_contributors_new_to_github"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1247,6 +1259,9 @@ func TestSweep_IssuesDisabledTreatedAsSoftFailure(t *testing.T) {
 		case r.URL.Path == "/repos/lucas42/no_issues_repo/contents/.circleci/config.yml":
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"message":"Not Found"}`))
+		case r.URL.Path == "/repos/lucas42/no_issues_repo/actions/permissions/fork-pr-contributor-approval":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"approval_policy":"first_time_contributors_new_to_github"}`))
 		case strings.HasPrefix(r.URL.Path, "/repos/lucas42/no_issues_repo/issues"):
 			// Issues disabled on this repo.
 			w.WriteHeader(http.StatusGone)
