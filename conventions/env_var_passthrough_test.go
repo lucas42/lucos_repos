@@ -603,6 +603,37 @@ services:
 	}
 }
 
+func TestEnvVarPassthrough_BothFormsPresent_NoFinding(t *testing.T) {
+	// When a var appears both as bare passthrough AND hardcoded KEY=value,
+	// the convention must still pass — belt-and-suspenders compose setups are fine.
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+      - LOGANNE_ENDPOINT
+      - STATE_DIR=/var/lib/app
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/app.py": `
+import os
+url = os.environ.get("LOGANNE_ENDPOINT", "")
+d = os.environ.get("STATE_DIR", "")
+`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass when vars are declared in either or both compose forms, got: %s", result.Detail)
+	}
+}
+
 func TestEnvVarPassthrough_NoenvAnnotationSuppresses(t *testing.T) {
 	compose := `
 services:
