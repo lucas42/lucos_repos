@@ -3,84 +3,12 @@ package conventions
 import (
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
-// ---- Unit tests for passthroughOnlyEnvVars ----
-
-func TestPassthroughOnlyEnvVars_ListForm_BareOnly(t *testing.T) {
-	yamlContent := `
-services:
-  app:
-    environment:
-      - PORT
-      - DATABASE_URL=postgres://localhost/db
-      - LOGANNE_ENDPOINT
-`
-	var compose envVarsComposeFile
-	if err := yaml.Unmarshal([]byte(yamlContent), &compose); err != nil {
-		t.Fatalf("failed to parse YAML: %v", err)
-	}
-	vars := passthroughOnlyEnvVars(compose)
-	if !vars["PORT"] {
-		t.Error("expected PORT to be passthrough (bare name)")
-	}
-	if !vars["LOGANNE_ENDPOINT"] {
-		t.Error("expected LOGANNE_ENDPOINT to be passthrough (bare name)")
-	}
-	if vars["DATABASE_URL"] {
-		t.Error("DATABASE_URL=value must NOT be passthrough (has hardcoded value)")
-	}
-}
-
-func TestPassthroughOnlyEnvVars_MapForm_NullOnly(t *testing.T) {
-	yamlContent := `
-services:
-  app:
-    environment:
-      PORT:
-      DATABASE_URL: "postgres://localhost/db"
-      LOGANNE_ENDPOINT:
-`
-	var compose envVarsComposeFile
-	if err := yaml.Unmarshal([]byte(yamlContent), &compose); err != nil {
-		t.Fatalf("failed to parse YAML: %v", err)
-	}
-	vars := passthroughOnlyEnvVars(compose)
-	if !vars["PORT"] {
-		t.Error("expected PORT to be passthrough (null value in map form)")
-	}
-	if !vars["LOGANNE_ENDPOINT"] {
-		t.Error("expected LOGANNE_ENDPOINT to be passthrough (null value in map form)")
-	}
-	if vars["DATABASE_URL"] {
-		t.Error("DATABASE_URL with hardcoded value must NOT be passthrough")
-	}
-}
-
-func TestPassthroughOnlyEnvVars_MultipleServices(t *testing.T) {
-	yamlContent := `
-services:
-  api:
-    environment:
-      - PORT
-  worker:
-    environment:
-      - REDIS_URL
-`
-	var compose envVarsComposeFile
-	if err := yaml.Unmarshal([]byte(yamlContent), &compose); err != nil {
-		t.Fatalf("failed to parse YAML: %v", err)
-	}
-	vars := passthroughOnlyEnvVars(compose)
-	if !vars["PORT"] {
-		t.Error("expected PORT from api service")
-	}
-	if !vars["REDIS_URL"] {
-		t.Error("expected REDIS_URL from worker service")
-	}
-}
+// Note: compose env-var parsing is tested via declaredEnvVars in
+// standard_env_vars_test.go (TestDeclaredEnvVars_*). The env_var_passthrough
+// convention uses that same function. The integration tests below cover the
+// full check flow including both bare-name and hardcoded-value compose forms.
 
 // ---- Unit tests for scanFileForEnvVars (per-language detectors) ----
 
@@ -649,8 +577,9 @@ services:
 	}
 }
 
-func TestEnvVarPassthrough_HardcodedValueDoesNotCount(t *testing.T) {
-	// KEY=value in compose is hardcoded config, not passthrough — must still fail.
+func TestEnvVarPassthrough_HardcodedValueSatisfiesRequirement(t *testing.T) {
+	// KEY=value in compose is intentional hardcoded config — the container receives
+	// the variable regardless, so the convention must not flag it.
 	compose := `
 services:
   app:
@@ -669,11 +598,8 @@ services:
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
 	})
-	if result.Pass {
-		t.Error("expected fail: LOGANNE_ENDPOINT=hardcoded must not count as passthrough")
-	}
-	if !strings.Contains(result.Detail, "LOGANNE_ENDPOINT") {
-		t.Errorf("expected detail to mention LOGANNE_ENDPOINT, got: %s", result.Detail)
+	if !result.Pass {
+		t.Errorf("expected pass: LOGANNE_ENDPOINT=hardcoded satisfies the requirement (container receives the var), got: %s", result.Detail)
 	}
 }
 

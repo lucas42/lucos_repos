@@ -166,43 +166,6 @@ func isEnvTestFile(path string, detector *envVarPassthroughDetector) bool {
 	return detector.isTestFilename(base)
 }
 
-// passthroughOnlyEnvVars extracts env var names declared as passthrough (bare
-// name, no hardcoded value) across all services in a parsed docker-compose.yml.
-//
-// In list form, passthrough is any entry without "=" (e.g. "PORT" not "PORT=8080").
-// In map form, passthrough is any entry with a null value ("PORT:" without a value).
-// Entries with hardcoded values (KEY=val in list form, KEY: val in map form) are
-// intentional config — the code can depend on them without lucos_creds wiring and
-// they must NOT count as passthrough.
-func passthroughOnlyEnvVars(compose envVarsComposeFile) map[string]bool {
-	vars := make(map[string]bool)
-	for _, svc := range compose.Services {
-		node := &svc.Environment
-		switch node.Kind {
-		case yaml.SequenceNode:
-			// List form: ["PORT", "FOO=bar", …]
-			// Only bare entries (no "=") are passthrough.
-			for _, item := range node.Content {
-				name := item.Value
-				if !strings.Contains(name, "=") {
-					vars[name] = true
-				}
-			}
-		case yaml.MappingNode:
-			// Map form: {PORT: null, FOO: "bar"}
-			// Only entries with a null value are passthrough.
-			for i := 0; i+1 < len(node.Content); i += 2 {
-				key := node.Content[i].Value
-				val := node.Content[i+1]
-				if val.Tag == "!!null" || val.Value == "" {
-					vars[key] = true
-				}
-			}
-		}
-	}
-	return vars
-}
-
 // envVarReading records a single env var read detected in source code.
 type envVarReading struct {
 	VarName string
@@ -335,7 +298,9 @@ func init() {
 				}
 			}
 
-			passthrough := passthroughOnlyEnvVars(compose)
+			// declaredEnvVars counts all forms: bare "KEY" and hardcoded "KEY=value"
+			// both satisfy the requirement — the container receives the variable either way.
+			declared := declaredEnvVars(compose)
 
 			// Fetch the repo tree to enumerate source files.
 			tree, err := GitHubRepoTreeFromBase(base, repo.GitHubToken, repo.Name)
@@ -377,8 +342,8 @@ func init() {
 				}
 
 				for _, reading := range scanFileForEnvVars(entry.Path, content) {
-					if passthrough[reading.VarName] {
-						continue // Already declared as passthrough — fine.
+					if declared[reading.VarName] {
+						continue // Declared in compose (any form) — fine.
 					}
 					if isRuntimeSuppliedEnvVar(reading.VarName) {
 						continue // OS/shell/runtime-supplied — not a compose concern.
