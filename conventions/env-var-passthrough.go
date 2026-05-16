@@ -13,7 +13,8 @@ import (
 
 // envVarPassthroughDetector defines a per-language strategy for finding env var
 // reads in source code. Each language gets its own set of file extensions,
-// regex patterns, and comment prefix for noenv opt-out annotations.
+// regex patterns, comment prefix for noenv opt-out annotations, and test-path
+// exclusion rules.
 type envVarPassthroughDetector struct {
 	// extensions is the set of file extensions this detector applies to (e.g. ".py").
 	extensions []string
@@ -23,10 +24,17 @@ type envVarPassthroughDetector struct {
 	// noenvPrefix is the line-comment prefix used for opt-out annotations.
 	// e.g. "# lucos_repos: noenv" for Python/Ruby, "// lucos_repos: noenv" for Go/JS.
 	noenvPrefix string
+	// testDirs is the set of directory path-segment names that indicate test code.
+	// Matched by splitting the path on "/" and checking each non-final segment.
+	testDirs map[string]bool
+	// isTestFilename reports whether the given file basename identifies test code.
+	isTestFilename func(base string) bool
 }
 
 // langDetectors is the ordered set of per-language env var read detectors
-// covering the lucos estate's languages.
+// covering the lucos estate's languages. Each entry includes test-path exclusion
+// rules (directory names and filename patterns) so that test files are not
+// scanned — they don't run inside the production container.
 var langDetectors = []envVarPassthroughDetector{
 	{
 		extensions: []string{".py"},
@@ -36,6 +44,12 @@ var langDetectors = []envVarPassthroughDetector{
 			regexp.MustCompile(`os\.getenv\(["']([A-Z_]+)["']`),
 		},
 		noenvPrefix: "# lucos_repos: noenv",
+		testDirs:    map[string]bool{"tests": true, "test": true},
+		isTestFilename: func(base string) bool {
+			return strings.HasPrefix(base, "test_") ||
+				strings.HasSuffix(base, "_test.py") ||
+				base == "conftest.py"
+		},
 	},
 	{
 		extensions: []string{".rb"},
@@ -44,6 +58,12 @@ var langDetectors = []envVarPassthroughDetector{
 			regexp.MustCompile(`ENV\.fetch\(["']([A-Z_]+)["']`),
 		},
 		noenvPrefix: "# lucos_repos: noenv",
+		testDirs:    map[string]bool{"spec": true, "test": true},
+		isTestFilename: func(base string) bool {
+			return strings.HasSuffix(base, "_spec.rb") ||
+				strings.HasSuffix(base, "_test.rb") ||
+				strings.HasPrefix(base, "test_")
+		},
 	},
 	{
 		extensions: []string{".erl"},
@@ -51,6 +71,11 @@ var langDetectors = []envVarPassthroughDetector{
 			regexp.MustCompile(`os:getenv\(["']([A-Z_]+)["']`),
 		},
 		noenvPrefix: "% lucos_repos: noenv",
+		testDirs:    map[string]bool{"test": true},
+		isTestFilename: func(base string) bool {
+			return strings.HasSuffix(base, "_SUITE.erl") ||
+				strings.HasSuffix(base, "_tests.erl")
+		},
 	},
 	{
 		extensions: []string{".go"},
@@ -59,20 +84,87 @@ var langDetectors = []envVarPassthroughDetector{
 			regexp.MustCompile(`os\.LookupEnv\(["']([A-Z_]+)["']`),
 		},
 		noenvPrefix: "// lucos_repos: noenv",
+		testDirs:    map[string]bool{"testdata": true},
+		isTestFilename: func(base string) bool {
+			return strings.HasSuffix(base, "_test.go")
+		},
 	},
 	{
-		extensions: []string{".js", ".mjs", ".ts"},
+		// Node.js and TypeScript, including JSX/TSX variants.
+		extensions: []string{".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"},
 		patterns: []*regexp.Regexp{
 			regexp.MustCompile(`process\.env\.([A-Z_]+)`),
 			regexp.MustCompile(`process\.env\[["']([A-Z_]+)["']\]`),
 		},
 		noenvPrefix: "// lucos_repos: noenv",
+		testDirs: map[string]bool{
+			"__tests__": true,
+			"test":      true,
+			"tests":     true,
+			"e2e":       true,
+			"cypress":   true,
+		},
+		isTestFilename: func(base string) bool {
+			return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
+		},
 	},
 }
 
 // envPassthroughExtMap maps each file extension to its detector for O(1) lookup.
 // Populated at init time from langDetectors.
 var envPassthroughExtMap map[string]*envVarPassthroughDetector
+
+// runtimeSuppliedEnvVars is the set of variable names provided by the OS
+// userland, base image shell setup, or container runtime — not by the
+// application's compose declaration. These are excluded from drift detection
+// because they are never legitimately declared in a lucos service's compose file.
+var runtimeSuppliedEnvVars = map[string]bool{
+	"HOME":    true, // POSIX / base image user setup
+	"PATH":    true, // POSIX / base image / Docker default
+	"USER":    true, // POSIX / base image user setup
+	"LOGNAME": true, // POSIX
+	"SHELL":   true, // POSIX
+	"TERM":    true, // POSIX (terminal type)
+	"LANG":    true, // POSIX locale
+	"LANGUAGE": true, // GNU locale extension
+	"PWD":     true, // Shell-set
+	"OLDPWD":  true, // Shell-set
+	"SHLVL":   true, // Shell-set
+	"_":       true, // Shell-set (last argv[0])
+	"HOSTNAME": true, // Docker container runtime
+}
+
+// isRuntimeSuppliedEnvVar reports whether the given variable name is a
+// runtime-supplied OS/shell/container variable that should not be checked
+// for compose passthrough. This covers the exact-match list and the LC_*
+// locale prefix family.
+func isRuntimeSuppliedEnvVar(name string) bool {
+	return runtimeSuppliedEnvVars[name] || strings.HasPrefix(name, "LC_")
+}
+
+// isEnvTestFile reports whether the given source file path should be skipped
+// because it is test code. A file is considered test code if either:
+//   - any path segment (split on "/", excluding the filename itself) equals a
+//     test directory name for this language; or
+//   - the file's basename matches the language's test filename patterns.
+//
+// Path-component matching splits on "/" to avoid false exclusions: a directory
+// named "contests" is not the same as "test".
+func isEnvTestFile(path string, detector *envVarPassthroughDetector) bool {
+	if detector == nil {
+		return false
+	}
+	segments := strings.Split(path, "/")
+	// Check all directory components (all segments except the filename).
+	for _, seg := range segments[:len(segments)-1] {
+		if detector.testDirs[seg] {
+			return true
+		}
+	}
+	// Check the filename itself.
+	base := segments[len(segments)-1]
+	return detector.isTestFilename(base)
+}
 
 // passthroughOnlyEnvVars extracts env var names declared as passthrough (bare
 // name, no hardcoded value) across all services in a parsed docker-compose.yml.
@@ -119,11 +211,18 @@ type envVarReading struct {
 }
 
 // scanFileForEnvVars scans a single source file's content for env var reads
-// using the appropriate language detector. It honours noenv opt-out annotations.
+// using the appropriate language detector. Returns nil if the file is:
+//   - an unsupported extension, or
+//   - identified as test code (via test-path exclusion rules).
+//
+// It honours noenv opt-out annotations on individual lines.
 func scanFileForEnvVars(path string, content []byte) []envVarReading {
 	ext := filepath.Ext(path)
 	detector := envPassthroughExtMap[ext]
 	if detector == nil {
+		return nil
+	}
+	if isEnvTestFile(path, detector) {
 		return nil
 	}
 
@@ -198,8 +297,9 @@ func init() {
 		Guidance: "Add each missing variable as a bare passthrough entry in the `environment:` block " +
 			"of `docker-compose.yml`. For example:\n\n```yaml\nenvironment:\n  - PORT\n  - MY_VAR\n```\n\n" +
 			"If the variable is set to a hardcoded value directly in compose (`MY_VAR=fixed`), that is " +
-			"intentional config — no change needed. If the variable is genuinely read only in tests or " +
-			"other contexts where it does not need to be injected by compose, add a `# lucos_repos: noenv MY_VAR` " +
+			"intentional config — no change needed. Test files and runtime-supplied OS/shell variables " +
+			"(`HOME`, `PATH`, `HOSTNAME`, `LC_*`, etc.) are excluded from scanning automatically. " +
+			"For any other variable that is genuinely not a compose concern, add a `# lucos_repos: noenv MY_VAR` " +
 			"annotation (using the appropriate comment syntax for the language) to the line where it is read.",
 		AppliesTo: []RepoType{RepoTypeSystem},
 		Check: func(repo RepoContext) ConventionResult {
@@ -279,6 +379,9 @@ func init() {
 				for _, reading := range scanFileForEnvVars(entry.Path, content) {
 					if passthrough[reading.VarName] {
 						continue // Already declared as passthrough — fine.
+					}
+					if isRuntimeSuppliedEnvVar(reading.VarName) {
+						continue // OS/shell/runtime-supplied — not a compose concern.
 					}
 					if _, alreadyRecorded := missing[reading.VarName]; !alreadyRecorded {
 						missing[reading.VarName] = fmt.Sprintf("%s:%d", reading.File, reading.Line)

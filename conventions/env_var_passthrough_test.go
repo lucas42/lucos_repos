@@ -82,7 +82,7 @@ services:
 	}
 }
 
-// ---- Unit tests for scanFileForEnvVars ----
+// ---- Unit tests for scanFileForEnvVars (per-language detectors) ----
 
 func TestScanFileForEnvVars_Python(t *testing.T) {
 	content := `
@@ -273,6 +273,185 @@ const e = process.env.LOGANNE_ENDPOINT;
 	}
 	if !found["LOGANNE_ENDPOINT"] {
 		t.Error("LOGANNE_ENDPOINT should still be detected")
+	}
+}
+
+// ---- Unit tests for isEnvTestFile (test-path exclusion) ----
+
+func TestIsEnvTestFile_PythonTestDir(t *testing.T) {
+	detector := envPassthroughExtMap[".py"]
+	cases := []struct {
+		path   string
+		expect bool
+	}{
+		{"src/tests/helpers.py", true},        // "tests" directory component
+		{"test/conftest.py", true},             // "test" directory component
+		{"test_config.py", true},               // starts with test_ — pytest discovers this as a test file
+		{"src/contests/foo.py", false},         // "contests" is NOT "tests" (path-component check)
+		{"src/main.py", false},                 // ordinary source file
+		{"test_main.py", true},                 // filename starts with test_
+		{"app_test.py", true},                  // filename ends with _test.py
+		{"conftest.py", true},                  // conftest.py exact match
+		{"src/app/conftest.py", true},          // conftest.py in subdirectory
+	}
+	for _, tc := range cases {
+		got := isEnvTestFile(tc.path, detector)
+		if got != tc.expect {
+			t.Errorf("isEnvTestFile(%q): got %v, want %v", tc.path, got, tc.expect)
+		}
+	}
+}
+
+func TestIsEnvTestFile_RubyTestDir(t *testing.T) {
+	detector := envPassthroughExtMap[".rb"]
+	cases := []struct {
+		path   string
+		expect bool
+	}{
+		{"spec/models/user_spec.rb", true},    // "spec" directory
+		{"test/unit/user_test.rb", true},       // "test" directory
+		{"src/main.rb", false},                 // ordinary source
+		{"user_spec.rb", true},                 // filename _spec.rb
+		{"user_test.rb", true},                 // filename _test.rb
+		{"test_helper.rb", true},               // filename test_*.rb
+		{"src/helpers/test_helper.rb", true},   // test_ filename in subdir
+	}
+	for _, tc := range cases {
+		got := isEnvTestFile(tc.path, detector)
+		if got != tc.expect {
+			t.Errorf("isEnvTestFile(%q): got %v, want %v", tc.path, got, tc.expect)
+		}
+	}
+}
+
+func TestIsEnvTestFile_ErlangTestDir(t *testing.T) {
+	detector := envPassthroughExtMap[".erl"]
+	cases := []struct {
+		path   string
+		expect bool
+	}{
+		{"test/fetcher_SUITE.erl", true},      // "test" directory
+		{"src/fetcher.erl", false},             // ordinary source
+		{"fetcher_SUITE.erl", true},            // _SUITE.erl filename
+		{"fetcher_tests.erl", true},            // _tests.erl filename
+		{"src/fetcher_tests.erl", true},        // _tests.erl in subdir
+	}
+	for _, tc := range cases {
+		got := isEnvTestFile(tc.path, detector)
+		if got != tc.expect {
+			t.Errorf("isEnvTestFile(%q): got %v, want %v", tc.path, got, tc.expect)
+		}
+	}
+}
+
+func TestIsEnvTestFile_GoTestFile(t *testing.T) {
+	detector := envPassthroughExtMap[".go"]
+	cases := []struct {
+		path   string
+		expect bool
+	}{
+		{"conventions/env_var_passthrough_test.go", true}, // _test.go filename
+		{"src/main_test.go", true},                        // _test.go in subdir
+		{"testdata/fixtures.go", true},                    // "testdata" directory
+		{"src/main.go", false},                            // ordinary source
+		{"src/testdata/helpers.go", true},                 // testdata in the middle
+	}
+	for _, tc := range cases {
+		got := isEnvTestFile(tc.path, detector)
+		if got != tc.expect {
+			t.Errorf("isEnvTestFile(%q): got %v, want %v", tc.path, got, tc.expect)
+		}
+	}
+}
+
+func TestIsEnvTestFile_NodeJS(t *testing.T) {
+	detector := envPassthroughExtMap[".js"]
+	cases := []struct {
+		path   string
+		expect bool
+	}{
+		{"__tests__/routes.js", true},         // __tests__ directory
+		{"test/server.js", true},              // test directory
+		{"e2e/flows.js", true},                // e2e directory
+		{"cypress/integration.js", true},      // cypress directory
+		{"src/app.test.js", true},             // .test. filename
+		{"src/app.spec.js", true},             // .spec. filename
+		{"src/server.js", false},              // ordinary source
+		{"src/contests/score.js", false},      // "contests" ≠ "tests"
+	}
+	for _, tc := range cases {
+		got := isEnvTestFile(tc.path, detector)
+		if got != tc.expect {
+			t.Errorf("isEnvTestFile(%q): got %v, want %v", tc.path, got, tc.expect)
+		}
+	}
+}
+
+func TestScanFileForEnvVars_SkipsTestFiles(t *testing.T) {
+	// Reads in test directories/files must return no readings.
+	testCases := []struct {
+		path    string
+		content string
+	}{
+		{"__tests__/routes.js", `const k = process.env.KEY_EXAMPLE;`},
+		{"test/server_test.go", `_ = os.Getenv("SECRET_KEY")`},
+		{"tests/conftest.py", `import os; val = os.getenv("PRIVATE_KEY")`},
+		{"spec/user_spec.rb", `token = ENV["AUTH_TOKEN"]`},
+		{"test/fetcher_SUITE.erl", `os:getenv("SECRET_TOKEN")`},
+	}
+	for _, tc := range testCases {
+		readings := scanFileForEnvVars(tc.path, []byte(tc.content))
+		if len(readings) != 0 {
+			t.Errorf("scanFileForEnvVars(%q): expected no readings for test file, got %d", tc.path, len(readings))
+		}
+	}
+}
+
+// Path-component split-on-"/" correctness: "contests" must NOT exclude.
+func TestIsEnvTestFile_PathComponentSplitCorrectness(t *testing.T) {
+	detector := envPassthroughExtMap[".py"]
+	// "contests" contains "test" as a substring but is NOT the segment "test" or "tests".
+	if isEnvTestFile("src/contests/foo.py", detector) {
+		t.Error("src/contests/foo.py must NOT be excluded — 'contests' != 'tests'")
+	}
+	// "src/tests/foo.py" MUST be excluded.
+	if !isEnvTestFile("src/tests/foo.py", detector) {
+		t.Error("src/tests/foo.py must be excluded — 'tests' is a test directory")
+	}
+}
+
+// ---- Unit tests for isRuntimeSuppliedEnvVar ----
+
+func TestIsRuntimeSuppliedEnvVar_ExactMatches(t *testing.T) {
+	runtimeVars := []string{
+		"HOME", "PATH", "USER", "LOGNAME", "SHELL", "TERM",
+		"LANG", "LANGUAGE", "PWD", "OLDPWD", "SHLVL", "_", "HOSTNAME",
+	}
+	for _, v := range runtimeVars {
+		if !isRuntimeSuppliedEnvVar(v) {
+			t.Errorf("expected %s to be runtime-supplied", v)
+		}
+	}
+}
+
+func TestIsRuntimeSuppliedEnvVar_LCPrefix(t *testing.T) {
+	lcVars := []string{"LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "LC_NUMERIC"}
+	for _, v := range lcVars {
+		if !isRuntimeSuppliedEnvVar(v) {
+			t.Errorf("expected %s (LC_* prefix) to be runtime-supplied", v)
+		}
+	}
+}
+
+func TestIsRuntimeSuppliedEnvVar_AppVarsNotExcluded(t *testing.T) {
+	appVars := []string{
+		"LOGANNE_ENDPOINT", "DEBUG", "NODE_ENV", "SYSTEM",
+		"PORT", "APP_ORIGIN", "DATABASE_URL", "TZ",
+	}
+	for _, v := range appVars {
+		if isRuntimeSuppliedEnvVar(v) {
+			t.Errorf("expected %s NOT to be runtime-supplied (should remain in scope)", v)
+		}
 	}
 }
 
@@ -581,5 +760,250 @@ b = os.environ.get("BETA_VAR", "")
 	}
 	if !strings.Contains(result.Detail, "BETA_VAR") {
 		t.Errorf("expected detail to mention BETA_VAR, got: %s", result.Detail)
+	}
+}
+
+// ---- Integration tests for test-path exclusion ----
+
+// Test that reads in test directories don't trigger findings.
+func TestEnvVarPassthrough_TestDirExcluded_Python(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"tests/test_routes.py": `import os; key = os.getenv("KEY_EXAMPLE")`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass: KEY_EXAMPLE in tests/ dir should be excluded, got: %s", result.Detail)
+	}
+}
+
+func TestEnvVarPassthrough_TestDirExcluded_Node(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"__tests__/routes.js": `const k = process.env.KEY_EXAMPLE;`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass: KEY_EXAMPLE in __tests__/ should be excluded, got: %s", result.Detail)
+	}
+}
+
+func TestEnvVarPassthrough_TestDirExcluded_Erlang(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"test/server_SUITE.erl": `os:getenv("TEST_ONLY_TOKEN")`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass: read in Erlang _SUITE.erl should be excluded, got: %s", result.Detail)
+	}
+}
+
+func TestEnvVarPassthrough_TestDirExcluded_Go(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/server_test.go": `_ = os.Getenv("SECRET_KEY")`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass: read in Go _test.go should be excluded, got: %s", result.Detail)
+	}
+}
+
+func TestEnvVarPassthrough_TestDirExcluded_Ruby(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"spec/server_spec.rb": `token = ENV["AUTH_TOKEN"]`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass: read in Ruby spec/ should be excluded, got: %s", result.Detail)
+	}
+}
+
+// "contests" directory must NOT be excluded (substring ≠ path component).
+func TestEnvVarPassthrough_ContestsDirNotExcluded(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/contests/score.py": `import os; v = os.getenv("CONTEST_API_KEY")`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if result.Pass {
+		t.Error("expected fail: src/contests/ is not a test dir; CONTEST_API_KEY should still be flagged")
+	}
+	if !strings.Contains(result.Detail, "CONTEST_API_KEY") {
+		t.Errorf("expected detail to mention CONTEST_API_KEY, got: %s", result.Detail)
+	}
+}
+
+// ---- Integration tests for runtime-supplied env var exclusion ----
+
+// HOME read in non-test production code must NOT produce a finding.
+func TestEnvVarPassthrough_RuntimeVar_HOME_Excluded(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/player.js": `const home = process.env.HOME; const url = process.env.MEDIA_MANAGER_URL;`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	// HOME should be excluded; MEDIA_MANAGER_URL should still be flagged.
+	if result.Pass {
+		t.Error("expected fail for MEDIA_MANAGER_URL (HOME should be excluded but MEDIA_MANAGER_URL is not)")
+	}
+	if strings.Contains(result.Detail, "HOME") {
+		t.Errorf("HOME should be excluded from findings, got: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "MEDIA_MANAGER_URL") {
+		t.Errorf("MEDIA_MANAGER_URL should still be flagged, got: %s", result.Detail)
+	}
+}
+
+// All runtime-supplied vars read in production code → no findings.
+func TestEnvVarPassthrough_AllRuntimeVarsExcluded(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/app.py": `
+import os
+h = os.getenv("HOME")
+p = os.getenv("PATH")
+u = os.getenv("USER")
+lo = os.getenv("LOGNAME")
+sh = os.getenv("SHELL")
+t = os.getenv("TERM")
+la = os.getenv("LANG")
+lan = os.getenv("LANGUAGE")
+pw = os.getenv("PWD")
+op = os.getenv("OLDPWD")
+sl = os.getenv("SHLVL")
+un = os.getenv("HOSTNAME")
+lca = os.getenv("LC_ALL")
+lcc = os.getenv("LC_CTYPE")
+`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if !result.Pass {
+		t.Errorf("expected pass: all runtime-supplied vars should be excluded, got: %s", result.Detail)
+	}
+}
+
+// DEBUG must NOT be excluded (application-level flag, in scope).
+func TestEnvVarPassthrough_DEBUG_InScope(t *testing.T) {
+	compose := `
+services:
+  app:
+    build: .
+    environment:
+      - PORT
+`
+	server := treeBlobServer(t, compose, map[string]string{
+		"src/main.go": `_ = os.Getenv("DEBUG")`,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+		Name:          "lucas42/lucos_test",
+		GitHubToken:   "fake-token",
+		GitHubBaseURL: server.URL,
+	})
+	if result.Pass {
+		t.Error("expected fail: DEBUG is an application-level var and must remain in scope")
+	}
+	if !strings.Contains(result.Detail, "DEBUG") {
+		t.Errorf("expected detail to mention DEBUG, got: %s", result.Detail)
 	}
 }
