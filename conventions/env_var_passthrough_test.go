@@ -386,7 +386,7 @@ func TestIsRuntimeSuppliedEnvVar_AppVarsNotExcluded(t *testing.T) {
 // ---- Full convention check integration tests ----
 
 func TestEnvVarPassthrough_Registered(t *testing.T) {
-	c := findConvention(t, "env_var_passthrough")
+	c := findConvention(t, "env-var-passthrough")
 	if c.Description == "" {
 		t.Error("env_var_passthrough has empty description")
 	}
@@ -411,7 +411,7 @@ func TestEnvVarPassthrough_NoComposeFile(t *testing.T) {
 	server := treeBlobServer(t, "", nil)
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -435,7 +435,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -460,7 +460,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -486,7 +486,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -512,7 +512,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -538,7 +538,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -564,7 +564,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -593,7 +593,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -624,7 +624,7 @@ d = os.environ.get("STATE_DIR", "")
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -652,7 +652,7 @@ p = os.getenv("PORT")
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -677,7 +677,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -704,7 +704,7 @@ b = os.environ.get("BETA_VAR", "")
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -736,7 +736,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -759,7 +759,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -782,7 +782,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -805,7 +805,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -828,7 +828,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -852,7 +852,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -881,7 +881,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -928,7 +928,7 @@ lcc = os.getenv("LC_CTYPE")
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,
@@ -952,7 +952,7 @@ services:
 	})
 	defer server.Close()
 
-	result := findConvention(t, "env_var_passthrough").Check(RepoContext{
+	result := findConvention(t, "env-var-passthrough").Check(RepoContext{
 		Name:          "lucas42/lucos_test",
 		GitHubToken:   "fake-token",
 		GitHubBaseURL: server.URL,

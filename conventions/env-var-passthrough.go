@@ -250,7 +250,7 @@ func init() {
 	}
 
 	Register(Convention{
-		ID:          "env_var_passthrough",
+		ID:          "env-var-passthrough",
 		Description: "Every env var read by application code is declared as passthrough in docker-compose.yml",
 		Rationale: "Docker Compose only forwards variables listed in a service's `environment:` block into " +
 			"the container. A variable read by application code but absent from that block is silently " +
