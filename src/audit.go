@@ -236,7 +236,6 @@ func (s *AuditSweeper) sweep() error {
 	}
 
 	allConventions := conventions.All()
-	issueClient := s.issueClientFactory(token)
 
 	// skippedCount tracks convention checks that could not be fully processed
 	// due to API errors (e.g. rate limiting). A non-zero count means the sweep
@@ -256,6 +255,15 @@ func (s *AuditSweeper) sweep() error {
 			slog.Debug("Skipping forked repo", "repo", repo.FullName)
 			continue
 		}
+
+		// Re-fetch the token per-repo — cheap due to caching; guarantees >5 min
+		// of life for the upcoming convention checks. A sweep can take ~17 minutes
+		// across ~88 repos; a token captured once at sweep start can expire mid-loop.
+		token, tokenErr := s.githubAuth.GetInstallationToken()
+		if tokenErr != nil {
+			return fmt.Errorf("failed to refresh GitHub token mid-sweep: %w", tokenErr)
+		}
+		issueClient := s.issueClientFactory(token)
 
 		repoName := repo.FullName
 		info, ok := repoInfos[repoName]

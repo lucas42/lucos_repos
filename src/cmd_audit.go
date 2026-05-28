@@ -97,6 +97,13 @@ func runAuditDryRun() {
 			continue
 		}
 
+		// Re-fetch the token per-repo — cheap due to caching; guarantees >5 min of life.
+		token, tokenErr := githubAuth.GetInstallationToken()
+		if tokenErr != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to refresh GitHub token mid-sweep: %v\n", tokenErr)
+			os.Exit(1)
+		}
+
 		repoName := repo.FullName
 		info, ok := repoInfos[repoName]
 		if !ok {
