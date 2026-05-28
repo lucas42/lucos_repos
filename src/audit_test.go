@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1292,5 +1293,90 @@ func TestSweep_IssuesDisabledTreatedAsSoftFailure(t *testing.T) {
 
 	if err := s.sweep(); err != nil {
 		t.Fatalf("expected sweep() to return nil when issues are disabled (410), got: %v", err)
+	}
+}
+
+// TestSweep_TokenRefreshFailureMidSweep verifies that when GetInstallationToken
+// fails during the per-repo refresh inside the sweep loop, sweep() returns an
+// error containing "failed to refresh GitHub token mid-sweep".
+//
+// Strategy: the auth server returns a near-expiry token (3 min life) on the
+// first call — used for fetchRepos. Because 3 min is inside the 5-min refresh
+// window, the per-repo GetInstallationToken() call also tries to refresh and
+// hits the auth server a second time, which returns 500.
+func TestSweep_TokenRefreshFailureMidSweep(t *testing.T) {
+	testKey := generateTestKey(t)
+
+	var authCallCount atomic.Int32
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.Contains(r.URL.Path, "access_tokens") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		n := authCallCount.Add(1)
+		if n == 1 {
+			// First call (pre-loop, for fetchRepos): succeed with a near-expiry token.
+			// 3 minutes of life is inside GetInstallationToken's 5-minute refresh
+			// threshold, so the per-repo call will also attempt a refresh.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(accessTokenResponse{
+				Token:     "near-expiry-token",
+				ExpiresAt: time.Now().Add(3 * time.Minute),
+			})
+		} else {
+			// Second call (per-repo, inside loop): simulate an auth failure.
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer authServer.Close()
+
+	// Fake GitHub API: one non-archived, non-forked repo. Convention checks
+	// are never reached (the per-repo token refresh fails first).
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/users/lucas42/repos" {
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_something"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_something"}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{
+		privateKey:       testKey,
+		installationID:   1,
+		cachedToken:      "old-expired-token",
+		tokenExpires:     time.Now().Add(-1 * time.Hour), // expired — forces first refresh
+		githubAPIBaseURL: authServer.URL,
+	}
+
+	err := s.sweep()
+	if err == nil {
+		t.Fatal("expected sweep() to return an error when token refresh fails mid-sweep, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to refresh GitHub token mid-sweep") {
+		t.Errorf("expected error to contain %q, got: %q", "failed to refresh GitHub token mid-sweep", err.Error())
+	}
+	if authCallCount.Load() < 2 {
+		t.Errorf("expected auth server to be called at least twice (pre-loop + per-repo), got %d", authCallCount.Load())
 	}
 }

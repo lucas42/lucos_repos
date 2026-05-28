@@ -25,6 +25,11 @@ type GitHubAuthClient struct {
 	privateKey     *rsa.PrivateKey
 	installationID int64
 
+	// githubAPIBaseURL is the base URL for GitHub API calls in
+	// GetInstallationToken. Overridable in tests to point at a fake server;
+	// defaults to "https://api.github.com" when empty.
+	githubAPIBaseURL string
+
 	mu           sync.Mutex
 	cachedToken  string
 	tokenExpires time.Time
@@ -189,7 +194,11 @@ func (c *GitHubAuthClient) GetInstallationToken() (string, error) {
 		return "", err
 	}
 
-	url := fmt.Sprintf("https://api.github.com/app/installations/%d/access_tokens", c.installationID)
+	baseURL := c.githubAPIBaseURL
+	if baseURL == "" {
+		baseURL = "https://api.github.com"
+	}
+	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, c.installationID)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return "", err
