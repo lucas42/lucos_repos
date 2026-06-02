@@ -394,6 +394,76 @@ func TestRequiredStatusChecksCoherent_EmptyHeadChecks_NoStaleFlag(t *testing.T) 
 	}
 }
 
+func TestGitHubRecentDependabotPRInfoFromBase_SkipsZeroCheckPR(t *testing.T) {
+	// Most-recent Dependabot PR (#10) has zero check runs due to a transient
+	// glitch. The next one (#9) has correct check runs. The function should
+	// skip #10 and return #9's info.
+	const zeroCheckSHA = "zero-check-sha"
+	const goodCheckSHA = "good-check-sha"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		type checkRun struct {
+			Name string `json:"name"`
+		}
+		type checkRunsResp struct {
+			CheckRuns []checkRun `json:"check_runs"`
+		}
+
+		switch r.URL.Path {
+		case "/repos/lucas42/test_repo/pulls":
+			type prRef struct {
+				SHA string `json:"sha"`
+			}
+			type prUser struct {
+				Login string `json:"login"`
+			}
+			type pr struct {
+				Number int    `json:"number"`
+				Head   prRef  `json:"head"`
+				Base   prRef  `json:"base"`
+				User   prUser `json:"user"`
+			}
+			json.NewEncoder(w).Encode([]pr{
+				{Number: 10, Head: prRef{SHA: zeroCheckSHA}, User: prUser{Login: "dependabot[bot]"}},
+				{Number: 9, Head: prRef{SHA: goodCheckSHA}, User: prUser{Login: "dependabot[bot]"}},
+			})
+		case "/repos/lucas42/test_repo/commits/" + zeroCheckSHA + "/check-runs":
+			json.NewEncoder(w).Encode(checkRunsResp{}) // zero check runs
+		case "/repos/lucas42/test_repo/commits/" + zeroCheckSHA + "/status":
+			json.NewEncoder(w).Encode(combinedStatusResponse{}) // zero statuses
+		case "/repos/lucas42/test_repo/commits/" + goodCheckSHA + "/check-runs":
+			json.NewEncoder(w).Encode(checkRunsResp{
+				CheckRuns: []checkRun{{Name: "ci/circleci: test"}},
+			})
+		case "/repos/lucas42/test_repo/commits/" + goodCheckSHA + "/status":
+			json.NewEncoder(w).Encode(combinedStatusResponse{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	info, err := GitHubRecentDependabotPRInfoFromBase(server.URL, "fake-token", "lucas42/test_repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected non-nil info — function should have fallen through to the second PR")
+	}
+	found := false
+	for _, name := range info.HeadCheckNames {
+		if name == "ci/circleci: test" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'ci/circleci: test' from second PR, got head check names: %v", info.HeadCheckNames)
+	}
+}
+
 func TestRequiredStatusChecksCoherent_MultipleIssues(t *testing.T) {
 	// Three issues at once:
 	// 1. "CodeQL" is stale (not on HEAD)
