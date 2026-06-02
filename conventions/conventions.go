@@ -889,6 +889,13 @@ func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*Dependa
 				}
 			}
 
+			// Skip PRs with zero check runs — they are not a representative
+			// sample (likely a transient GitHub Actions glitch). Fall through
+			// to the next Dependabot PR.
+			if len(headNames) == 0 {
+				continue
+			}
+
 			info := &DependabotPRInfo{HeadCheckNames: headNames}
 
 			// Fetch check names for the base commit (main at the time the PR
