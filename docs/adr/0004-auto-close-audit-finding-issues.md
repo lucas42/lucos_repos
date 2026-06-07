@@ -1,7 +1,7 @@
 # ADR-0004: Auto-close audit-finding issues when conventions pass
 
 **Date:** 2026-04-02
-**Status:** Proposed
+**Status:** Accepted
 **Issue:** [#248](https://github.com/lucas42/lucos_repos/issues/248)
 **Amends:** [ADR-0002](0002-audit-issue-lifecycle.md)
 
