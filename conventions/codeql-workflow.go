@@ -338,3 +338,26 @@ func (w *codeqlWorkflow) explicitLanguages() []string {
 // analyzeLanguageRe matches required status check names of the form "Analyze (X)"
 // and captures the language name X.
 var analyzeLanguageRe = regexp.MustCompile(`^Analyze \(([^)]+)\)$`)
+
+// GitHubCodeQLExplicitLanguagesFromBase fetches .github/workflows/codeql-analysis.yml
+// and returns its explicit strategy.matrix.language values. Returns nil (not an
+// error) if the file doesn't exist or if the workflow has no explicit language
+// matrix — callers should skip the language-mismatch check in those cases.
+func GitHubCodeQLExplicitLanguagesFromBase(baseURL, token, repo string) ([]string, error) {
+	content, err := GitHubFileContentFromBase(baseURL, token, repo, codeqlWorkflowPath)
+	if err != nil {
+		return nil, err
+	}
+	if content == nil {
+		return nil, nil // workflow file doesn't exist
+	}
+	var workflow codeqlWorkflow
+	if err := yaml.Unmarshal(content, &workflow); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", codeqlWorkflowPath, err)
+	}
+	langs := workflow.explicitLanguages()
+	if len(langs) == 0 {
+		return nil, nil // no explicit matrix — auto-detection or empty workflow
+	}
+	return langs, nil
+}

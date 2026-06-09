@@ -87,9 +87,42 @@ func init() {
 			// empty reported set might just mean no CI has run yet (e.g. a
 			// docs-only commit with path filters), not that all checks are stale.
 			if len(reported) > 0 {
+				// Collect checks missing from HEAD before flagging — some may be
+				// in-flight rather than stale (e.g. the ci/circleci: lucos/build
+				// rollup status posts after all jobs finish, so a freshly-merged
+				// HEAD can have faster checks but not the rollup yet).
+				var missingOnHead []string
 				for _, check := range requiredChecks {
 					if !reported[check] {
-						issues = append(issues, fmt.Sprintf("required check %q is not reported on HEAD of main — likely a stale or renamed check name that will silently block all PRs from merging", check))
+						missingOnHead = append(missingOnHead, check)
+					}
+				}
+				if len(missingOnHead) > 0 {
+					// Look back one commit: if a check is present on the
+					// immediately-preceding commit it is likely still in-flight
+					// on the new HEAD, not genuinely stale. Only flag it if it
+					// was absent from the parent too (a genuine rename/removal
+					// will have dropped off the prior commit as well).
+					// If the parent lookup fails, fall back to flagging
+					// (conservative — this is a security-relevant check).
+					parentReported := make(map[string]bool)
+					if parentSHAs, err := GitHubCommitParentsFromBase(base, repo.GitHubToken, repo.Name, "heads/main"); err == nil && len(parentSHAs) > 0 {
+						parentSHA := parentSHAs[0]
+						if parentStatuses, err2 := GitHubCommitStatusContextsFromBase(base, repo.GitHubToken, repo.Name, parentSHA); err2 == nil {
+							for _, ctx := range parentStatuses {
+								parentReported[ctx] = true
+							}
+						}
+						if parentRuns, err2 := GitHubCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name, parentSHA); err2 == nil {
+							for _, name := range parentRuns {
+								parentReported[name] = true
+							}
+						}
+					}
+					for _, check := range missingOnHead {
+						if !parentReported[check] {
+							issues = append(issues, fmt.Sprintf("required check %q is not reported on HEAD of main — likely a stale or renamed check name that will silently block all PRs from merging", check))
+						}
 					}
 				}
 			}
@@ -113,6 +146,41 @@ func init() {
 				}
 				if !hasAnalyzeCheck {
 					issues = append(issues, "no CodeQL Analyze (X) check is required — auto-merge can complete before CodeQL finishes, bypassing security scanning")
+				}
+			}
+
+			// Step 3b: detect CodeQL language mismatch — a required Analyze (X) check
+			// whose language X is not in codeql-analysis.yml's explicit matrix will
+			// never fire (e.g. branch protection still requires Analyze (python) after
+			// the CodeQL workflow was updated to run go). Only runs when the workflow
+			// has an explicit matrix, so repos without a workflow or without an
+			// explicit language list are not flagged.
+			if HasCodeQLLanguage(languages) {
+				workflowLangs, wlErr := GitHubCodeQLExplicitLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+				if wlErr != nil {
+					slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-codeql-languages", "error", wlErr)
+					// Non-fatal: skip this sub-check on error rather than returning an
+					// error result — a workflow parse failure should not block the other
+					// sub-checks from reporting their findings.
+				} else if len(workflowLangs) > 0 {
+					workflowLangSet := make(map[string]bool)
+					for _, l := range workflowLangs {
+						workflowLangSet[l] = true
+					}
+					for _, check := range requiredChecks {
+						m := analyzeLanguageRe.FindStringSubmatch(check)
+						if m == nil {
+							continue
+						}
+						lang := m[1]
+						if !workflowLangSet[lang] {
+							var suggestions []string
+							for _, wl := range workflowLangs {
+								suggestions = append(suggestions, fmt.Sprintf("Analyze (%s)", wl))
+							}
+							issues = append(issues, fmt.Sprintf("required check %q expects language %q but codeql-analysis.yml's explicit matrix has [%s] — this check will never fire; update branch protection to require %s instead", check, lang, strings.Join(workflowLangs, ", "), strings.Join(suggestions, " and ")))
+						}
+					}
 				}
 			}
 

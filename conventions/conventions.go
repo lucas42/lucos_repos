@@ -638,6 +638,53 @@ func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, er
 	}
 }
 
+// commitParentsResponse is a subset of the GitHub commit API response,
+// used to retrieve parent commit SHAs.
+type commitParentsResponse struct {
+	Parents []struct {
+		SHA string `json:"sha"`
+	} `json:"parents"`
+}
+
+// GitHubCommitParentsFromBase fetches the parent commit SHAs for the given ref.
+// Returns nil (not an error) if the API returns 404.
+func GitHubCommitParentsFromBase(baseURL, token, repo, ref string) ([]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/commits/%s", baseURL, repo, ref)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var commit commitParentsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&commit); err != nil {
+			return nil, fmt.Errorf("failed to decode commit response: %w", err)
+		}
+		shas := make([]string, len(commit.Parents))
+		for i, p := range commit.Parents {
+			shas[i] = p.SHA
+		}
+		return shas, nil
+	case http.StatusNotFound:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected GitHub API status %d fetching commit %s in %s", resp.StatusCode, ref, repo)
+	}
+}
+
 // pullRequestEntry is a single PR from the GitHub pulls API.
 type pullRequestEntry struct {
 	Number int `json:"number"`
