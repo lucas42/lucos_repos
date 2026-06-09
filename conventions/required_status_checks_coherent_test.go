@@ -11,15 +11,18 @@ import (
 // coherentChecksServerOpts configures the test server for
 // required-status-checks-coherent tests.
 type coherentChecksServerOpts struct {
-	requiredChecks        []string       // nil/empty = no branch protection
-	headStatusContexts    []string       // status contexts on HEAD of main
-	headCheckRunNames     []string       // check run names on HEAD of main
-	languages             map[string]int // repo languages (nil = empty map)
-	hasDependabotYML      bool           // whether .github/dependabot.yml exists
-	dependabotPRSHA       string         // empty = no Dependabot PR found
-	dependabotPRChecks    []string       // check runs on the Dependabot PR head
-	dependabotBaseSHA     string         // SHA of main when the dep PR was opened (empty = no base SHA)
-	dependabotBaseChecks  []string       // check runs on the dep PR base commit
+	requiredChecks          []string       // nil/empty = no branch protection
+	headStatusContexts      []string       // status contexts on HEAD of main
+	headCheckRunNames       []string       // check run names on HEAD of main
+	headParentSHA           string         // SHA of the parent commit of HEAD (empty = parent lookup returns 404)
+	headParentStatusContexts []string      // status contexts on HEAD's parent commit
+	headParentCheckRunNames []string       // check run names on HEAD's parent commit
+	languages               map[string]int // repo languages (nil = empty map)
+	hasDependabotYML        bool           // whether .github/dependabot.yml exists
+	dependabotPRSHA         string         // empty = no Dependabot PR found
+	dependabotPRChecks      []string       // check runs on the Dependabot PR head
+	dependabotBaseSHA       string         // SHA of main when the dep PR was opened (empty = no base SHA)
+	dependabotBaseChecks    []string       // check runs on the dep PR base commit
 }
 
 // coherentChecksServer builds a test HTTP server that covers all GitHub API
@@ -44,6 +47,23 @@ func coherentChecksServer(t *testing.T, opts coherentChecksServerOpts) *httptest
 			} else {
 				w.WriteHeader(http.StatusNotFound)
 				w.Write([]byte(`{"message":"Branch not protected"}`))
+			}
+
+		case "/repos/lucas42/test_repo/commits/heads/main":
+			// Commit metadata — used for the parent look-back in the stale-check test.
+			if opts.headParentSHA != "" {
+				type parentRef struct {
+					SHA string `json:"sha"`
+				}
+				type commitResp struct {
+					Parents []parentRef `json:"parents"`
+				}
+				json.NewEncoder(w).Encode(commitResp{
+					Parents: []parentRef{{SHA: opts.headParentSHA}},
+				})
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"Not Found"}`))
 			}
 
 		case "/repos/lucas42/test_repo/commits/heads/main/status":
@@ -103,6 +123,25 @@ func coherentChecksServer(t *testing.T, opts coherentChecksServerOpts) *httptest
 			}
 
 		default:
+			// Handle HEAD parent commit endpoints (dynamic SHA path).
+			if opts.headParentSHA != "" {
+				if r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.headParentSHA+"/check-runs" {
+					resp := checkRunsResp{}
+					for _, name := range opts.headParentCheckRunNames {
+						resp.CheckRuns = append(resp.CheckRuns, checkRun{Name: name})
+					}
+					json.NewEncoder(w).Encode(resp)
+					return
+				}
+				if r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.headParentSHA+"/status" {
+					resp := combinedStatusResponse{}
+					for _, ctx := range opts.headParentStatusContexts {
+						resp.Statuses = append(resp.Statuses, statusEntry{Context: ctx})
+					}
+					json.NewEncoder(w).Encode(resp)
+					return
+				}
+			}
 			// Handle Dependabot PR head commit endpoints (dynamic SHA path).
 			if opts.dependabotPRSHA != "" {
 				if r.URL.Path == "/repos/lucas42/test_repo/commits/"+opts.dependabotPRSHA+"/check-runs" {
@@ -499,5 +538,58 @@ func TestRequiredStatusChecksCoherent_MultipleIssues(t *testing.T) {
 	// Dependabot unsatisfiable
 	if !strings.Contains(result.Detail, "Dependabot") {
 		t.Errorf("expected Detail to mention Dependabot issue, got: %s", result.Detail)
+	}
+}
+
+func TestRequiredStatusChecksCoherent_InFlightCheck(t *testing.T) {
+	// Reproduces the lucos_arachne false-positive (lucas42/lucos_repos#413):
+	// the sweep fires while CI is still in-flight on a freshly-merged HEAD.
+	// The fast checks ("ci/circleci: test") have already posted; the slow
+	// workflow-rollup check ("ci/circleci: lucos/build") has not appeared yet.
+	// Both checks ARE present on the immediately-preceding parent commit.
+	// The convention should pass — the missing check is in-flight, not stale.
+	// Using Erlang (no CodeQL support) to keep focus on the in-flight scenario
+	// and avoid an unrelated CodeQL-coverage finding from Step 3.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:           []string{"ci/circleci: test", "ci/circleci: lucos/build"},
+		headStatusContexts:       []string{"ci/circleci: test"}, // rollup not posted yet
+		headCheckRunNames:        nil,
+		headParentSHA:            "parent_abc",
+		headParentStatusContexts: []string{"ci/circleci: test", "ci/circleci: lucos/build"},
+		languages:                map[string]int{"Erlang": 10000}, // not CodeQL-supported
+		hasDependabotYML:         false,
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass for in-flight check (present on parent, absent on freshly-merged HEAD), got: %s", result.Detail)
+	}
+}
+
+func TestRequiredStatusChecksCoherent_StaleCheckAbsentFromParentToo(t *testing.T) {
+	// A genuinely stale check ("CodeQL") is absent from both HEAD and its parent
+	// commit — the parent look-back should not suppress this finding.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:          []string{"ci/circleci: test", "CodeQL"},
+		headCheckRunNames:       []string{"ci/circleci: test", "Analyze (go)"},
+		headParentSHA:           "parent_abc",
+		headParentCheckRunNames: []string{"ci/circleci: test", "Analyze (go)"}, // CodeQL absent from parent too
+		languages:               map[string]int{"Go": 10000},
+		hasDependabotYML:        false,
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail when stale check absent from both HEAD and parent, got pass: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "CodeQL") {
+		t.Errorf("expected Detail to mention stale check 'CodeQL', got: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "stale") {
+		t.Errorf("expected Detail to mention 'stale', got: %s", result.Detail)
 	}
 }
