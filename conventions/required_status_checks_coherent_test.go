@@ -1,6 +1,7 @@
 package conventions
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,12 @@ type coherentChecksServerOpts struct {
 	requiredChecks          []string       // nil/empty = no branch protection
 	headStatusContexts      []string       // status contexts on HEAD of main
 	headCheckRunNames       []string       // check run names on HEAD of main
-	headParentSHA           string         // SHA of the parent commit of HEAD (empty = parent lookup returns 404)
-	headParentStatusContexts []string      // status contexts on HEAD's parent commit
-	headParentCheckRunNames []string       // check run names on HEAD's parent commit
-	languages               map[string]int // repo languages (nil = empty map)
-	hasDependabotYML        bool           // whether .github/dependabot.yml exists
+	headParentSHA            string         // SHA of the parent commit of HEAD (empty = parent lookup returns 404)
+	headParentStatusContexts []string       // status contexts on HEAD's parent commit
+	headParentCheckRunNames  []string       // check run names on HEAD's parent commit
+	codeqlWorkflowContent    string         // raw YAML content of codeql-analysis.yml (empty = file not found)
+	languages                map[string]int // repo languages (nil = empty map)
+	hasDependabotYML         bool           // whether .github/dependabot.yml exists
 	dependabotPRSHA         string         // empty = no Dependabot PR found
 	dependabotPRChecks      []string       // check runs on the Dependabot PR head
 	dependabotBaseSHA       string         // SHA of main when the dep PR was opened (empty = no base SHA)
@@ -86,6 +88,18 @@ func coherentChecksServer(t *testing.T, opts coherentChecksServerOpts) *httptest
 				langs = map[string]int{}
 			}
 			json.NewEncoder(w).Encode(langs)
+
+		case "/repos/lucas42/test_repo/contents/.github/workflows/codeql-analysis.yml":
+			if opts.codeqlWorkflowContent != "" {
+				encoded := base64.StdEncoding.EncodeToString([]byte(opts.codeqlWorkflowContent))
+				json.NewEncoder(w).Encode(map[string]string{
+					"content":  encoded,
+					"encoding": "base64",
+				})
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"Not Found"}`))
+			}
 
 		case "/repos/lucas42/test_repo/contents/.github/dependabot.yml":
 			if opts.hasDependabotYML {
@@ -591,5 +605,105 @@ func TestRequiredStatusChecksCoherent_StaleCheckAbsentFromParentToo(t *testing.T
 	}
 	if !strings.Contains(result.Detail, "stale") {
 		t.Errorf("expected Detail to mention 'stale', got: %s", result.Detail)
+	}
+}
+
+// codeqlWorkflowYAML returns a minimal codeql-analysis.yml with the given
+// explicit language matrix. Used by CodeQL language mismatch tests.
+func codeqlWorkflowYAML(languages []string) string {
+	langList := `["` + strings.Join(languages, `", "`) + `"]`
+	return `on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+permissions: {}
+jobs:
+  analyze:
+    permissions:
+      security-events: write
+    strategy:
+      matrix:
+        language: ` + langList + `
+    steps:
+      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/analyze@v4
+`
+}
+
+func TestRequiredStatusChecksCoherent_CodeQLLanguageMismatch(t *testing.T) {
+	// Reproduces the lucos_firewall scenario (lucas42/lucos_repos#406): the
+	// CodeQL workflow was changed from python to go but branch protection still
+	// requires Analyze (python). The new Step 3b should flag the mismatch.
+	//
+	// The parent commit has Analyze (python), so Step 2's look-back does NOT flag
+	// it as stale — only Step 3b fires for the language mismatch.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:           []string{"ci/circleci: test", "Analyze (python)"},
+		headStatusContexts:       []string{"ci/circleci: test"},
+		headCheckRunNames:        []string{"Analyze (go)"},
+		headParentSHA:            "parent_abc",
+		headParentStatusContexts: []string{"ci/circleci: test"},
+		headParentCheckRunNames:  []string{"Analyze (python)"}, // was on parent → Step 2 passes
+		codeqlWorkflowContent:    codeqlWorkflowYAML([]string{"go"}),
+		languages:                map[string]int{"Go": 10000},
+		hasDependabotYML:         false,
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if result.Pass {
+		t.Errorf("expected fail for CodeQL language mismatch (Analyze (python) required but workflow uses go), got pass: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "python") {
+		t.Errorf("expected Detail to mention the mismatched language 'python', got: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "go") {
+		t.Errorf("expected Detail to mention the workflow language 'go', got: %s", result.Detail)
+	}
+	if !strings.Contains(result.Detail, "Analyze (go)") {
+		t.Errorf("expected Detail to suggest Analyze (go), got: %s", result.Detail)
+	}
+}
+
+func TestRequiredStatusChecksCoherent_CodeQLLanguageMatch(t *testing.T) {
+	// Required Analyze (go) and workflow explicitly has go — should pass.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:        []string{"ci/circleci: test", "Analyze (go)"},
+		headStatusContexts:    []string{"ci/circleci: test"},
+		headCheckRunNames:     []string{"Analyze (go)"},
+		codeqlWorkflowContent: codeqlWorkflowYAML([]string{"go"}),
+		languages:             map[string]int{"Go": 10000},
+		hasDependabotYML:      false,
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when required Analyze (go) matches workflow language go, got: %s", result.Detail)
+	}
+}
+
+func TestRequiredStatusChecksCoherent_CodeQLNoWorkflow_NoMismatchFlagged(t *testing.T) {
+	// No codeql-analysis.yml present — the language mismatch sub-check should
+	// not fire (per acceptance criteria: "a repo with no CodeQL workflow is not
+	// flagged"). Both the required check and the language appear in HEAD's CI
+	// output so Step 2 passes too.
+	server := coherentChecksServer(t, coherentChecksServerOpts{
+		requiredChecks:        []string{"ci/circleci: test", "Analyze (python)"},
+		headStatusContexts:    []string{"ci/circleci: test"},
+		headCheckRunNames:     []string{"Analyze (python)"},
+		codeqlWorkflowContent: "", // no workflow → 404
+		languages:             map[string]int{"Python": 10000},
+		hasDependabotYML:      false,
+	})
+	defer server.Close()
+
+	repo := RepoContext{Name: "lucas42/test_repo", GitHubToken: "fake-token", GitHubBaseURL: server.URL}
+	result := findConvention(t, "required-status-checks-coherent").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected pass when no codeql-analysis.yml exists (language mismatch check not applicable), got: %s", result.Detail)
 	}
 }

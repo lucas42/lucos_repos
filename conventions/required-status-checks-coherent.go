@@ -149,6 +149,41 @@ func init() {
 				}
 			}
 
+			// Step 3b: detect CodeQL language mismatch — a required Analyze (X) check
+			// whose language X is not in codeql-analysis.yml's explicit matrix will
+			// never fire (e.g. branch protection still requires Analyze (python) after
+			// the CodeQL workflow was updated to run go). Only runs when the workflow
+			// has an explicit matrix, so repos without a workflow or without an
+			// explicit language list are not flagged.
+			if HasCodeQLLanguage(languages) {
+				workflowLangs, wlErr := GitHubCodeQLExplicitLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+				if wlErr != nil {
+					slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-codeql-languages", "error", wlErr)
+					// Non-fatal: skip this sub-check on error rather than returning an
+					// error result — a workflow parse failure should not block the other
+					// sub-checks from reporting their findings.
+				} else if len(workflowLangs) > 0 {
+					workflowLangSet := make(map[string]bool)
+					for _, l := range workflowLangs {
+						workflowLangSet[l] = true
+					}
+					for _, check := range requiredChecks {
+						m := analyzeLanguageRe.FindStringSubmatch(check)
+						if m == nil {
+							continue
+						}
+						lang := m[1]
+						if !workflowLangSet[lang] {
+							var suggestions []string
+							for _, wl := range workflowLangs {
+								suggestions = append(suggestions, fmt.Sprintf("Analyze (%s)", wl))
+							}
+							issues = append(issues, fmt.Sprintf("required check %q expects language %q but codeql-analysis.yml's explicit matrix has [%s] — this check will never fire; update branch protection to require %s instead", check, lang, strings.Join(workflowLangs, ", "), strings.Join(suggestions, " and ")))
+						}
+					}
+				}
+			}
+
 			// Step 4: if Dependabot is configured, check that all required status
 			// checks also fire on recent Dependabot PRs.
 			hasDependabot, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".github/dependabot.yml")
