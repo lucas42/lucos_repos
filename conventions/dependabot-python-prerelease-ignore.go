@@ -15,8 +15,9 @@ type pythonPrereleaseDependabotConfig struct {
 }
 
 type pythonPrereleaseDependabotUpdate struct {
-	PackageEcosystem string                        `yaml:"package-ecosystem"`
-	Directory        string                        `yaml:"directory"`
+	PackageEcosystem string                                 `yaml:"package-ecosystem"`
+	Directory        string                                 `yaml:"directory"`
+	Directories      []string                               `yaml:"directories"`
 	Ignore           []pythonPrereleaseDependabotIgnoreRule `yaml:"ignore"`
 }
 
@@ -190,10 +191,12 @@ func init() {
 				return ConventionResult{Convention: conventionID, Err: fmt.Errorf("error fetching %s: %w", dependabotPath, err)}
 			}
 			if dependabotContent == nil {
+				// No dependabot.yml at all — docker-dependabot-updater-present will flag
+				// the missing docker entries. Nothing to check here.
 				return ConventionResult{
 					Convention: conventionID,
-					Pass:       false,
-					Detail:     "dependabot.yml not found; cannot verify Python pre-release ignore rules",
+					Pass:       true,
+					Detail:     "dependabot.yml not found; docker-dependabot-updater-present will flag missing entries",
 				}
 			}
 
@@ -204,19 +207,31 @@ func init() {
 			}
 
 			// Build a lookup: docker ecosystem directory → update entry.
+			// Supports both singular directory: and plural directories: forms.
 			dockerUpdates := map[string]pythonPrereleaseDependabotUpdate{}
 			for _, u := range depConfig.Updates {
-				if u.PackageEcosystem == "docker" {
-					dockerUpdates[u.Directory] = u
+				if u.PackageEcosystem != "docker" {
+					continue
+				}
+				dirs := u.Directories
+				if len(dirs) == 0 && u.Directory != "" {
+					dirs = []string{u.Directory}
+				}
+				for _, d := range dirs {
+					dockerUpdates[d] = u
 				}
 			}
 
 			// Step 5: check each Python directory has the ignore rule.
+			// If no docker entry exists for a directory, defer to
+			// docker-dependabot-updater-present to raise the missing-entry issue —
+			// this convention's single responsibility is checking that an EXISTING
+			// docker entry carries the Python pre-release ignore rule.
 			var failures []string
 			for _, entry := range pythonEntries {
 				u, ok := dockerUpdates[entry.depDir]
 				if !ok {
-					failures = append(failures, fmt.Sprintf("no docker dependabot entry for directory %q (base image: %s)", entry.depDir, entry.baseImage))
+					// No docker entry — docker-dependabot-updater-present will flag this.
 					continue
 				}
 				if !hasPythonIgnoreRule(u) {
