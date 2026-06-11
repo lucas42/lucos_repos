@@ -273,7 +273,7 @@ updates:
 }
 
 func TestDependabotPythonPrereleaseIgnore_NoDependabotYml(t *testing.T) {
-	// Python image with no dependabot.yml at all → fail.
+	// Python image with no dependabot.yml at all → pass (defers to docker-dependabot-updater-present).
 	compose := `
 services:
   app:
@@ -292,16 +292,14 @@ COPY . .
 	defer server.Close()
 
 	result := findConvention(t, "dependabot-python-prerelease-ignore").Check(repoCtx(server))
-	if result.Pass {
-		t.Error("expected fail when no dependabot.yml and Python base image present")
-	}
-	if !strings.Contains(result.Detail, "dependabot.yml not found") {
-		t.Errorf("expected detail to mention missing dependabot.yml, got: %s", result.Detail)
+	if !result.Pass {
+		t.Errorf("expected pass (defer to docker-dependabot-updater-present) when no dependabot.yml, got fail: %s", result.Detail)
 	}
 }
 
 func TestDependabotPythonPrereleaseIgnore_NoDockerDependabotEntry(t *testing.T) {
-	// Python image with dependabot.yml but no docker ecosystem entry → fail.
+	// Python image with dependabot.yml but no docker ecosystem entry → pass.
+	// The missing docker entry is docker-dependabot-updater-present's responsibility.
 	compose := `
 services:
   app:
@@ -336,11 +334,8 @@ updates:
 	defer server.Close()
 
 	result := findConvention(t, "dependabot-python-prerelease-ignore").Check(repoCtx(server))
-	if result.Pass {
-		t.Error("expected fail when no docker dependabot entry for Python directory")
-	}
-	if !strings.Contains(result.Detail, "no docker dependabot entry") {
-		t.Errorf("expected detail to mention missing docker entry, got: %s", result.Detail)
+	if !result.Pass {
+		t.Errorf("expected pass (defer to docker-dependabot-updater-present) when no docker dependabot entry, got fail: %s", result.Detail)
 	}
 }
 
@@ -603,6 +598,80 @@ updates:
 	result := findConvention(t, "dependabot-python-prerelease-ignore").Check(repoCtx(server))
 	if !result.Pass {
 		t.Errorf("expected pass: Python dir has rule, non-Python dir doesn't need it, got fail: %s", result.Detail)
+	}
+}
+
+// --- Tests: directories: plural form ---
+
+func TestDependabotPythonPrereleaseIgnore_PluralDirectoriesWithRule(t *testing.T) {
+	// Two Python services covered by a single docker entry using directories: ["/api", "/worker"]
+	// with ignore rules → should pass.
+	compose := `
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: lucas42/test_repo_api:${VERSION:-latest}
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    image: lucas42/test_repo_worker:${VERSION:-latest}
+`
+	apiDockerfile := `FROM python:3.14-slim
+ARG VERSION
+ENV VERSION=$VERSION
+COPY . .
+`
+	workerDockerfile := `FROM python:3.14-slim
+ARG VERSION
+ENV VERSION=$VERSION
+COPY . .
+`
+	dependabot := `
+version: 2
+updates:
+  - package-ecosystem: docker
+    directories: ["/api", "/worker"]
+    schedule:
+      interval: daily
+    allow:
+      - dependency-type: all
+    ignore:
+      - dependency-name: "python"
+        versions:
+          - "*.pre.slim.a"
+          - "*.pre.slim.b"
+          - "*.pre.slim.rc*"
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    allow:
+      - dependency-type: all
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+`
+	server := pythonPrereleaseServer(t, map[string]string{
+		"docker-compose.yml":        compose,
+		"api/Dockerfile":            apiDockerfile,
+		"worker/Dockerfile":         workerDockerfile,
+		".github/dependabot.yml":    dependabot,
+	})
+	defer server.Close()
+
+	result := findConvention(t, "dependabot-python-prerelease-ignore").Check(repoCtx(server))
+	if !result.Pass {
+		t.Errorf("expected pass with plural directories: form covering both services, got fail: %s", result.Detail)
 	}
 }
 
