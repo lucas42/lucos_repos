@@ -1,7 +1,7 @@
 # ADR-0006: A generated C4 model of the lucOS estate
 
 **Date:** 2026-06-14
-**Status:** Proposed
+**Status:** Accepted (2026-06-14). Ratified by lucas42 on merge of lucas42/lucos_repos#423.
 **Issue:** [#422](https://github.com/lucas42/lucos_repos/issues/422)
 **Related:** [ADR-0001](0001-greenfield-rewrite-as-convention-auditor.md) (establishes `lucos_repos` as the estate's static-config reader), [ADR-0004](0004-auto-close-audit-finding-issues.md) (audit-finding issue lifecycle — the divergence-output mechanism)
 
