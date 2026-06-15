@@ -51,11 +51,99 @@ func sampleC4Model() c4Model {
 		{Event: "deploySystem", Consumer: "lucos_monitoring"},
 		{Event: "photoUploaded", Consumer: "lucos_monitoring"},
 	}
+	producerEdges := []c4ProducerEdge{
+		{Source: "lucos_photos", Event: "photoUploaded"},
+	}
 	return c4Model{
-		systems:    systems,
-		sysSet:     sysSet,
-		syncEdges:  syncEdges,
-		asyncEdges: asyncEdges,
+		systems:       systems,
+		sysSet:        sysSet,
+		syncEdges:     syncEdges,
+		asyncEdges:    asyncEdges,
+		producerEdges: producerEdges,
+	}
+}
+
+// TestProbeLoganneProducers_Success verifies that a valid /producers response
+// is parsed into a map correctly.
+func TestProbeLoganneProducers_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/producers" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"lucos_photos":["photoUploaded","albumCreated"],"lucos_arachne":["ingestComplete"]}`))
+	}))
+	defer server.Close()
+
+	domain := strings.TrimPrefix(server.URL, "http://")
+	client := &http.Client{Transport: &plainHTTPTransport{}, Timeout: 2 * time.Second}
+	result, err := probeLoganneProducers(domain, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 sources, got %d", len(result))
+	}
+	if len(result["lucos_photos"]) != 2 {
+		t.Errorf("expected 2 event types for lucos_photos, got %v", result["lucos_photos"])
+	}
+	if len(result["lucos_arachne"]) != 1 || result["lucos_arachne"][0] != "ingestComplete" {
+		t.Errorf("expected [ingestComplete] for lucos_arachne, got %v", result["lucos_arachne"])
+	}
+}
+
+// TestProbeLoganneProducers_NonOKStatus verifies that a non-200 response returns an error.
+func TestProbeLoganneProducers_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	domain := strings.TrimPrefix(server.URL, "http://")
+	client := &http.Client{Transport: &plainHTTPTransport{}, Timeout: 2 * time.Second}
+	_, err := probeLoganneProducers(domain, client)
+	if err == nil {
+		t.Error("expected error for 404 response, got nil")
+	}
+}
+
+// TestParseLoganneProducers_Basic verifies that valid sources produce sorted edges.
+func TestParseLoganneProducers_Basic(t *testing.T) {
+	raw := map[string][]string{
+		"lucos_photos":  {"albumCreated", "photoUploaded"},
+		"lucos_arachne": {"ingestComplete"},
+	}
+	sysSet := map[string]bool{"lucos_photos": true, "lucos_arachne": true, "lucos_loganne": true}
+	edges, divs := parseLoganneProducers(raw, sysSet)
+	if len(divs) != 0 {
+		t.Errorf("expected no divergences, got: %v", divs)
+	}
+	if len(edges) != 3 {
+		t.Fatalf("expected 3 edges, got %d: %v", len(edges), edges)
+	}
+	// Sorted by (Source, Event): lucos_arachne < lucos_photos
+	if edges[0].Source != "lucos_arachne" || edges[0].Event != "ingestComplete" {
+		t.Errorf("edge[0] = %+v, want {lucos_arachne ingestComplete}", edges[0])
+	}
+	if edges[1].Source != "lucos_photos" || edges[1].Event != "albumCreated" {
+		t.Errorf("edge[1] = %+v, want {lucos_photos albumCreated}", edges[1])
+	}
+}
+
+// TestParseLoganneProducers_UnknownSourceRaisesDivergence verifies that a
+// producer whose source is not in sysSet is recorded as a divergence.
+func TestParseLoganneProducers_UnknownSourceRaisesDivergence(t *testing.T) {
+	raw := map[string][]string{
+		"unknown_system": {"someEvent"},
+	}
+	sysSet := map[string]bool{"lucos_photos": true}
+	edges, divs := parseLoganneProducers(raw, sysSet)
+	if len(edges) != 0 {
+		t.Errorf("expected no edges for unknown source, got %d", len(edges))
+	}
+	if len(divs) != 1 || !strings.Contains(divs[0], "unknown_system") {
+		t.Errorf("expected divergence mentioning unknown_system, got: %v", divs)
 	}
 }
 
@@ -75,6 +163,7 @@ func TestGenerateC4DSL_ContainsExpectedSections(t *testing.T) {
 		{"loganne system with domain", `lucos_loganne = softwareSystem "lucos_loganne" "loganne.l42.eu"`},
 		{"router system with no domain", `lucos_router = softwareSystem "lucos_router" "(no public domain)"`},
 		{"sync edge", `lucos_photos -> lucos_loganne "depends on (sync)"`},
+		{"producer edge", `lucos_photos -> lucos_loganne "emits photoUploaded"`},
 		{"async edge", `lucos_loganne -> lucos_monitoring "deploySystem"`},
 		{"async edge 2", `lucos_loganne -> lucos_monitoring "photoUploaded"`},
 		{"views block", "views {"},
@@ -143,6 +232,9 @@ func TestGenerateC4Mermaid_SyncAndAsyncEdgesPresent(t *testing.T) {
 
 	if !strings.Contains(mermaid, "lucos_photos --> lucos_loganne") {
 		t.Error("expected solid sync edge lucos_photos --> lucos_loganne")
+	}
+	if !strings.Contains(mermaid, "lucos_photos -.photoUploaded.-> lucos_loganne") {
+		t.Error("expected dotted producer edge lucos_photos -.photoUploaded.-> lucos_loganne")
 	}
 	if !strings.Contains(mermaid, "lucos_loganne -.deploySystem.-> lucos_monitoring") {
 		t.Error("expected dotted async edge lucos_loganne -.deploySystem.-> lucos_monitoring")
