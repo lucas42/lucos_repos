@@ -36,6 +36,13 @@ type c4AsyncEdge struct {
 	Consumer string // system ID of the webhook target
 }
 
+// c4ProducerEdge is an async event production edge in the C4 model, sourced
+// from loganne's observed GET /producers map.
+type c4ProducerEdge struct {
+	Source string // system ID of the event producer
+	Event  string // loganne event name emitted
+}
+
 // c4InfoCheck holds just the dependsOn field from a single /_info check entry.
 // The value may be a string or a JSON array of strings.
 type c4InfoCheck struct {
@@ -50,12 +57,13 @@ type c4InfoResponse struct {
 
 // c4Model holds the complete derived C4 model ready for rendering.
 type c4Model struct {
-	systems     []configySystem // sorted by ID
-	sysSet      map[string]bool // set of all system IDs (for edge validation)
-	syncEdges   []c4SyncEdge    // sorted by (From, To)
-	asyncEdges  []c4AsyncEdge   // sorted by (Consumer, Event)
-	divergences []string        // sorted; each line starts with "- "
-	unreachable []string        // sorted system IDs that did not respond to /_info
+	systems       []configySystem  // sorted by ID
+	sysSet        map[string]bool  // set of all system IDs (for edge validation)
+	syncEdges     []c4SyncEdge     // sorted by (From, To)
+	asyncEdges    []c4AsyncEdge    // sorted by (Consumer, Event)
+	producerEdges []c4ProducerEdge // sorted by (Source, Event)
+	divergences   []string         // sorted; each line starts with "- "
+	unreachable   []string         // sorted system IDs that did not respond to /_info
 }
 
 // dslIdent converts a system name to a Structurizr DSL-safe identifier by
@@ -88,7 +96,15 @@ func generateC4DSL(m c4Model) string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString("        # async event subscriptions (loganne)\n")
+	b.WriteString("        # async event producers (→ loganne)\n")
+	for _, edge := range m.producerEdges {
+		if m.sysSet[edge.Source] {
+			fmt.Fprintf(&b, "        %s -> lucos_loganne \"emits %s\"\n",
+				dslIdent(edge.Source), edge.Event)
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString("        # async event subscriptions (loganne → consumers)\n")
 	for _, edge := range m.asyncEdges {
 		fmt.Fprintf(&b, "        lucos_loganne -> %s \"%s\"\n",
 			dslIdent(edge.Consumer), edge.Event)
@@ -118,6 +134,12 @@ func generateC4Mermaid(m c4Model) string {
 		connected[edge.Consumer] = true
 		connected["lucos_loganne"] = true
 	}
+	for _, edge := range m.producerEdges {
+		if m.sysSet[edge.Source] {
+			connected[edge.Source] = true
+			connected["lucos_loganne"] = true
+		}
+	}
 
 	sortedConnected := make([]string, 0, len(connected))
 	for s := range connected {
@@ -139,7 +161,13 @@ func generateC4Mermaid(m c4Model) string {
 			fmt.Fprintf(&b, "  %s --> %s\n", dslIdent(edge.From), dslIdent(edge.To))
 		}
 	}
-	b.WriteString("  %% async events (dotted, via loganne)\n")
+	b.WriteString("  %% async producers (dotted, → loganne)\n")
+	for _, edge := range m.producerEdges {
+		if m.sysSet[edge.Source] {
+			fmt.Fprintf(&b, "  %s -.%s.-> lucos_loganne\n", dslIdent(edge.Source), edge.Event)
+		}
+	}
+	b.WriteString("  %% async consumers (dotted, loganne →)\n")
 	for _, edge := range m.asyncEdges {
 		fmt.Fprintf(&b, "  lucos_loganne -.%s.-> %s\n", edge.Event, dslIdent(edge.Consumer))
 	}
@@ -209,6 +237,58 @@ func probeInfoEndpoint(domain string, client *http.Client) (reportedName string,
 		}
 	}
 	return reportedName, deps, nil
+}
+
+// probeLoganneProducers GETs a loganne instance's /producers endpoint and
+// returns the observed source→event-type map. The client should have a timeout.
+// Returns (nil, err) on network or parse error.
+func probeLoganneProducers(domain string, client *http.Client) (map[string][]string, error) {
+	url := "https://" + domain + "/producers"
+	resp, err := client.Get(url) //nolint:gosec // domain is from trusted configy config
+	if err != nil {
+		return nil, fmt.Errorf("/producers GET failed: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("/producers returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read /producers body: %w", err)
+	}
+	var result map[string][]string
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse /producers JSON: %w", err)
+	}
+	return result, nil
+}
+
+// parseLoganneProducers converts the raw /producers map into sorted producer
+// edges, recording a divergence for any source that isn't in the configy sysSet.
+func parseLoganneProducers(raw map[string][]string, sysSet map[string]bool) ([]c4ProducerEdge, []string) {
+	var edges []c4ProducerEdge
+	var divergences []string
+	for source, types := range raw {
+		if !sysSet[source] {
+			divergences = append(divergences,
+				fmt.Sprintf("- loganne producer `%s` is not a known configy system", source))
+			continue
+		}
+		for _, eventType := range types {
+			edges = append(edges, c4ProducerEdge{Source: source, Event: eventType})
+		}
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Source != edges[j].Source {
+			return edges[i].Source < edges[j].Source
+		}
+		return edges[i].Event < edges[j].Event
+	})
+	sort.Strings(divergences)
+	return edges, divergences
 }
 
 // parseLoganneWebhooks parses loganne's webhooks-config.json and returns a
@@ -416,8 +496,33 @@ func (s *AuditSweeper) generateAndCommitC4() {
 
 	asyncEdges, asyncDivergences := parseLoganneWebhooks([]byte(loganneFile.Content), domain2sys)
 
-	// 3. Probe /_info for each system that has a public domain.
+	// Shared HTTP client for all live endpoint probes (/_info and /producers).
 	infoClient := &http.Client{Timeout: c4InfoTimeout}
+
+	// 2b. Probe loganne's /producers endpoint for observed async-producer edges.
+	// This is non-critical: failure is logged and produces an empty producer set,
+	// not a sweep error. The loganne domain is resolved from the domain2sys map.
+	var producerEdges []c4ProducerEdge
+	var producerDivergences []string
+	loganneDomain := ""
+	for d, id := range domain2sys {
+		if id == "lucos_loganne" {
+			loganneDomain = d
+			break
+		}
+	}
+	if loganneDomain != "" {
+		raw, probeErr := probeLoganneProducers(loganneDomain, infoClient)
+		if probeErr != nil {
+			slog.Warn("C4: failed to probe loganne /producers", "error", probeErr)
+		} else {
+			producerEdges, producerDivergences = parseLoganneProducers(raw, sysSet)
+		}
+	} else {
+		slog.Warn("C4: lucos_loganne has no domain in configy; skipping /producers probe")
+	}
+
+	// 3. Probe /_info for each system that has a public domain.
 	var syncEdges []c4SyncEdge
 	var syncDivergences []string
 	var unreachable []string
@@ -458,16 +563,18 @@ func (s *AuditSweeper) generateAndCommitC4() {
 	})
 
 	allDivergences := append(syncDivergences, asyncDivergences...)
+	allDivergences = append(allDivergences, producerDivergences...)
 	sort.Strings(allDivergences)
 	sort.Strings(unreachable)
 
 	model := c4Model{
-		systems:     systems,
-		sysSet:      sysSet,
-		syncEdges:   syncEdges,
-		asyncEdges:  asyncEdges,
-		divergences: allDivergences,
-		unreachable: unreachable,
+		systems:       systems,
+		sysSet:        sysSet,
+		syncEdges:     syncEdges,
+		asyncEdges:    asyncEdges,
+		producerEdges: producerEdges,
+		divergences:   allDivergences,
+		unreachable:   unreachable,
 	}
 
 	dsl := generateC4DSL(model)
@@ -478,6 +585,7 @@ func (s *AuditSweeper) generateAndCommitC4() {
 		"systems", len(systems),
 		"sync_edges", len(syncEdges),
 		"async_edges", len(asyncEdges),
+		"producer_edges", len(producerEdges),
 		"divergences", len(allDivergences),
 		"unreachable", len(unreachable),
 	)
@@ -485,7 +593,7 @@ func (s *AuditSweeper) generateAndCommitC4() {
 	// 4. Commit changed artifacts to the lucos_repos repository.
 	outputRepo := s.githubOrg + "/lucos_repos"
 	commitMsg := "Auto-generate C4 estate model from sweep\n\n" +
-		"Regenerated from configy systems, loganne webhooks, and /_info probes."
+		"Regenerated from configy systems, loganne webhooks, loganne /producers, and /_info probes."
 
 	artifacts := []struct {
 		path    string
