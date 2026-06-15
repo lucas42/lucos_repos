@@ -386,6 +386,140 @@ func TestPutC4GitHubFile_Update(t *testing.T) {
 	}
 }
 
+// TestProbeInfoEndpoint_StringDependsOn verifies that a scalar string dependsOn
+// value is returned as a single dep.
+func TestProbeInfoEndpoint_StringDependsOn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_info" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"system": "lucos_photos",
+			"checks": {
+				"loganne": {"dependsOn": "lucos_loganne"}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	// Strip the scheme so we can pass just the host:port as "domain".
+	domain := strings.TrimPrefix(server.URL, "http://")
+	// probeInfoEndpoint builds "https://" + domain + "/_info", so swap the
+	// server to serve over plain HTTP by using a custom transport that strips TLS.
+	client := &http.Client{
+		Transport: &plainHTTPTransport{},
+		Timeout:   2 * time.Second,
+	}
+	name, deps, err := probeInfoEndpoint(domain, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "lucos_photos" {
+		t.Errorf("expected system name %q, got %q", "lucos_photos", name)
+	}
+	if len(deps) != 1 || deps[0] != "lucos_loganne" {
+		t.Errorf("expected deps [lucos_loganne], got %v", deps)
+	}
+}
+
+// TestProbeInfoEndpoint_ArrayDependsOn verifies that an array dependsOn value
+// is expanded into multiple deps.
+func TestProbeInfoEndpoint_ArrayDependsOn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"system": "lucos_arachne",
+			"checks": {
+				"loganne": {"dependsOn": ["lucos_loganne", "lucos_eolas"]}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	domain := strings.TrimPrefix(server.URL, "http://")
+	client := &http.Client{Transport: &plainHTTPTransport{}, Timeout: 2 * time.Second}
+	name, deps, err := probeInfoEndpoint(domain, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "lucos_arachne" {
+		t.Errorf("expected system name %q, got %q", "lucos_arachne", name)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("expected 2 deps, got %d: %v", len(deps), deps)
+	}
+	// Order is map iteration order, but both must be present.
+	found := map[string]bool{}
+	for _, d := range deps {
+		found[d] = true
+	}
+	if !found["lucos_loganne"] || !found["lucos_eolas"] {
+		t.Errorf("expected lucos_loganne and lucos_eolas in deps, got %v", deps)
+	}
+}
+
+// TestProbeInfoEndpoint_NoDependsOn verifies that a check with no dependsOn
+// field returns an empty deps slice without error.
+func TestProbeInfoEndpoint_NoDependsOn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"system": "lucos_monitoring",
+			"checks": {
+				"db": {}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	domain := strings.TrimPrefix(server.URL, "http://")
+	client := &http.Client{Transport: &plainHTTPTransport{}, Timeout: 2 * time.Second}
+	name, deps, err := probeInfoEndpoint(domain, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "lucos_monitoring" {
+		t.Errorf("expected system name %q, got %q", "lucos_monitoring", name)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected no deps for check without dependsOn, got %v", deps)
+	}
+}
+
+// TestProbeInfoEndpoint_NonOKStatus verifies that a non-200 HTTP response from
+// /_info is returned as an error.
+func TestProbeInfoEndpoint_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	domain := strings.TrimPrefix(server.URL, "http://")
+	client := &http.Client{Transport: &plainHTTPTransport{}, Timeout: 2 * time.Second}
+	_, _, err := probeInfoEndpoint(domain, client)
+	if err == nil {
+		t.Error("expected an error for non-200 status, got nil")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("expected error to mention 503, got: %v", err)
+	}
+}
+
+// plainHTTPTransport rewrites https:// scheme to http:// so that tests can use
+// httptest.NewServer (plain HTTP) with probeInfoEndpoint (which always builds
+// an https:// URL). Only used in tests.
+type plainHTTPTransport struct{}
+
+func (t *plainHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	plain := *req
+	u := *req.URL
+	u.Scheme = "http"
+	plain.URL = &u
+	return http.DefaultTransport.RoundTrip(&plain)
+}
+
 // TestGenerateAndCommitC4_EarlyExitOnLoganneNotFound verifies that
 // generateAndCommitC4 exits gracefully when the loganne webhooks-config.json
 // is not found (404 from the GitHub API), without probing any /_info endpoints

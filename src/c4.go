@@ -17,6 +17,11 @@ import (
 // system endpoints during C4 generation.
 const c4InfoTimeout = 5 * time.Second
 
+// c4GitHubClient is the HTTP client used for all GitHub Contents API calls
+// within C4 generation. A 30-second timeout prevents a hung connection from
+// stalling the sweep indefinitely.
+var c4GitHubClient = &http.Client{Timeout: 30 * time.Second}
+
 // c4SyncEdge is a sync dependency edge in the C4 model, sourced from
 // /_info → checks[].dependsOn.
 type c4SyncEdge struct {
@@ -280,7 +285,7 @@ func (s *AuditSweeper) fetchC4GitHubFile(token, repo, path string) (*c4GitHubFil
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c4GitHubClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -345,7 +350,7 @@ func (s *AuditSweeper) putC4GitHubFile(token, repo, path, content, currentSHA, m
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c4GitHubClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("GitHub Contents PUT failed: %w", err)
 	}
