@@ -26,6 +26,7 @@ const githubAPIBaseURL = "https://api.github.com"
 // configySystem represents a single entry from the configy /systems endpoint.
 type configySystem struct {
 	ID                    string   `json:"id"`
+	Domain                string   `json:"domain,omitempty"`
 	Hosts                 []string `json:"hosts"`
 	UnsupervisedAgentCode bool     `json:"unsupervisedAgentCode"`
 }
@@ -383,6 +384,10 @@ func (s *AuditSweeper) sweep() error {
 	if err := s.db.DeleteStaleFindings(start); err != nil {
 		slog.Warn("Failed to clean up stale findings", "error", err)
 	}
+
+	// Generate and commit the C4 estate model. Non-critical — failures are
+	// logged but do not affect the sweep result or the schedule-tracker report.
+	s.generateAndCommitC4()
 
 	return nil
 }
