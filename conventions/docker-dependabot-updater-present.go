@@ -33,6 +33,19 @@ func (e dockerUpdaterDependabotEntry) coveredDirectories() []string {
 	return nil
 }
 
+// dependabotDirForDockerfile converts a Dockerfile path to the corresponding
+// dependabot.yml directory value.
+//
+//	"Dockerfile"      → "/"
+//	"api/Dockerfile"  → "/api"
+func dependabotDirForDockerfile(dfPath string) string {
+	lastSlash := strings.LastIndex(dfPath, "/")
+	if lastSlash < 0 {
+		return "/"
+	}
+	return "/" + dfPath[:lastSlash]
+}
+
 func init() {
 	Register(Convention{
 		ID:          "docker-dependabot-updater-present",
