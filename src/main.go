@@ -36,6 +36,14 @@ type Metric struct {
 }
 
 func main() {
+	// CLI subcommand dispatch: "conventions" prints the generated convention
+	// catalogue (docs/conventions.md) to stdout. Regenerate that file with:
+	//   go run ./src conventions > docs/conventions.md
+	if len(os.Args) > 1 && os.Args[1] == "conventions" {
+		fmt.Print(conventions.RenderCatalogue())
+		return
+	}
+
 	// CLI subcommand dispatch: "audit --dry-run" and "audit diff".
 	if len(os.Args) > 1 && os.Args[1] == "audit" {
 		auditArgs := os.Args[2:]
