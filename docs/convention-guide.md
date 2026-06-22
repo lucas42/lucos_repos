@@ -2,6 +2,8 @@
 
 This guide defines what makes a good convention definition in lucos_repos. Every convention produces real GitHub issues on real repositories, so every definition must be worth the attention cost of someone reading and acting on that issue.
 
+For the rendered list of every convention currently enforced — the single source of truth that other docs link to — see the generated [convention catalogue](conventions.md) ([ADR-0007](adr/0007-generated-convention-catalogue-single-source-of-truth.md)).
+
 ## What a convention is (and isn't)
 
 A convention is a rule that should hold true across all (or a defined subset of) lucos repositories. Conventions exist to catch drift from agreed infrastructure standards -- not to express opinions or preferences.
