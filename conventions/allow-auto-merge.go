@@ -52,7 +52,11 @@ func GitHubAutoMergeAllowedFromBase(baseURL, token, repo string) (bool, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	// Use the package httpClient (not http.DefaultClient directly) so this
+	// GraphQL call gets the same throttling and rate-limit retry as the REST
+	// content-fetch calls during a sweep (lucas42/lucos_repos#433) — it was
+	// previously bypassing that chain entirely.
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("GitHub GraphQL request failed: %w", err)
 	}
@@ -62,7 +66,7 @@ func GitHubAutoMergeAllowedFromBase(baseURL, token, repo string) (bool, error) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("unexpected GitHub GraphQL status %d for %s", resp.StatusCode, repo)
+		return false, unexpectedStatusErr(resp, fmt.Sprintf("(GraphQL) for %s", repo))
 	}
 
 	var result graphQLRepoAutoMergeResponse

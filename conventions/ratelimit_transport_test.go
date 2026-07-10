@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,6 +170,92 @@ func TestRateLimitTransport_RateLimitNoResetHeader_ReturnsError(t *testing.T) {
 	_, err := transport.RoundTrip(req)
 	if err == nil {
 		t.Fatal("expected error when no reset header, got nil")
+	}
+}
+
+// TestRateLimitTransport_SecondaryLimit_RetryAfter_RetriesAndSucceeds verifies
+// that a secondary rate-limit 403 (Retry-After header, no X-RateLimit-Reset —
+// the actual fingerprint GitHub returns for abuse-detection limits, per
+// lucas42/lucos_repos#433) is retried using Retry-After rather than being
+// treated as unretryable.
+func TestRateLimitTransport_SecondaryLimit_RetryAfter_RetriesAndSucceeds(t *testing.T) {
+	secondaryHeaders := http.Header{}
+	secondaryHeaders.Set("Retry-After", "30")
+	mock := &mockRoundTripper{
+		responses: []*http.Response{
+			makeResp(http.StatusForbidden, `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`, secondaryHeaders),
+			makeResp(http.StatusOK, `{"ok":true}`, nil),
+		},
+	}
+
+	origSleep := rateLimitSleep
+	defer func() { rateLimitSleep = origSleep }()
+	var sleptFor time.Duration
+	rateLimitSleep = func(d time.Duration) { sleptFor = d }
+
+	transport := NewRateLimitTransport(mock)
+	req, _ := http.NewRequest("GET", "http://example.com/repos/lucas42/test/contents/file.txt", nil)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 after retry, got %d", resp.StatusCode)
+	}
+	if mock.calls != 2 {
+		t.Errorf("expected 2 calls (rate limit + retry), got %d", mock.calls)
+	}
+	if sleptFor != 30*time.Second {
+		t.Errorf("expected sleep of 30s from Retry-After, got %s", sleptFor)
+	}
+}
+
+// TestRateLimitTransport_SecondaryLimit_RetryAfterExceedsMaxWait_ReturnsError
+// verifies a Retry-After value beyond rateLimitMaxWait is treated the same as
+// an over-long X-RateLimit-Reset wait: no retry, descriptive error.
+func TestRateLimitTransport_SecondaryLimit_RetryAfterExceedsMaxWait_ReturnsError(t *testing.T) {
+	secondaryHeaders := http.Header{}
+	secondaryHeaders.Set("Retry-After", "3600") // 1 hour, exceeds rateLimitMaxWait (5 min)
+	mock := &mockRoundTripper{
+		responses: []*http.Response{
+			makeResp(http.StatusForbidden, `{"message":"You have exceeded a secondary rate limit"}`, secondaryHeaders),
+		},
+	}
+
+	origSleep := rateLimitSleep
+	defer func() { rateLimitSleep = origSleep }()
+	rateLimitSleep = func(d time.Duration) { t.Error("sleep should not be called when wait exceeds max") }
+
+	transport := NewRateLimitTransport(mock)
+	req, _ := http.NewRequest("GET", "http://example.com/test", nil)
+	_, err := transport.RoundTrip(req)
+	if err == nil {
+		t.Fatal("expected error when Retry-After wait exceeds max, got nil")
+	}
+	if mock.calls != 1 {
+		t.Errorf("expected 1 call (no retry), got %d", mock.calls)
+	}
+}
+
+// TestRateLimitTransport_UnretryableError_IncludesDiagnostic verifies the
+// observability fix: when a rate-limit 403 cannot be retried, the error
+// message includes the response body and rate-limit headers, so a future
+// occurrence is self-diagnosing from logs alone (lucas42/lucos_repos#433).
+func TestRateLimitTransport_UnretryableError_IncludesDiagnostic(t *testing.T) {
+	mock := &mockRoundTripper{
+		responses: []*http.Response{
+			makeResp(http.StatusForbidden, `{"message":"API rate limit exceeded for installation ID 12345"}`, nil),
+		},
+	}
+
+	transport := NewRateLimitTransport(mock)
+	req, _ := http.NewRequest("GET", "http://example.com/test", nil)
+	_, err := transport.RoundTrip(req)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "installation ID 12345") {
+		t.Errorf("expected error to include response body, got: %v", err)
 	}
 }
 

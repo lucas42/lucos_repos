@@ -23,6 +23,26 @@ const configyBaseURL = "https://configy.l42.eu"
 // It can be overridden in tests via AuditSweeper.githubAPIBaseURL.
 const githubAPIBaseURL = "https://api.github.com"
 
+// contentFetchThrottleInterval paces convention-check content-API requests
+// (Contents, branch protection, languages, etc.) to no more than one every
+// this long. A full sweep fires ~30 conventions × ~90 repos of these
+// sequentially with no natural pacing, which is fast enough to trip GitHub's
+// secondary rate limit even without any concurrency (lucas42/lucos_repos#433).
+// 100ms caps the rate at 10 req/s, comfortably under GitHub's undocumented
+// abuse-detection threshold, while adding only a modest amount of wall-clock
+// time to a sweep that already runs for minutes.
+const contentFetchThrottleInterval = 100 * time.Millisecond
+
+// auditRetryTailDelay is how long the sweep waits, after a full pass, before
+// retrying convention checks that were skipped due to API errors. Giving a
+// short buffer lets any secondary rate-limit cooldown that outlasted
+// RateLimitTransport's single in-request retry clear before the retry pass.
+const auditRetryTailDelay = 30 * time.Second
+
+// auditRetryTailSleep is the function used to wait before the retry-tail
+// pass. A package-level variable so tests can replace it with a no-op.
+var auditRetryTailSleep = time.Sleep
+
 // configySystem represents a single entry from the configy /systems endpoint.
 type configySystem struct {
 	ID                    string   `json:"id"`
@@ -46,6 +66,16 @@ type configyComponent struct {
 // configyScript represents a single entry from the configy /scripts endpoint.
 type configyScript struct {
 	ID string `json:"id"`
+}
+
+// pendingCheck captures everything needed to retry a convention check that
+// returned an indeterminate result on the first pass, without re-fetching
+// the repo's token or classification.
+type pendingCheck struct {
+	repoName    string
+	convention  conventions.Convention
+	ctx         conventions.RepoContext
+	issueClient *GitHubIssueClient
 }
 
 // gitHubRepo represents a single entry from the GitHub /users/{user}/repos endpoint.
@@ -77,6 +107,14 @@ type AuditSweeper struct {
 	githubAPIBaseURL        string
 	scheduleTrackerEndpoint string
 
+	// contentFetchThrottleInterval paces convention-check content-API
+	// requests (see contentFetchThrottleInterval const). Defaults to the
+	// package const in NewAuditSweeper; left at its zero value in tests
+	// constructed directly (e.g. via &AuditSweeper{...}), which disables
+	// throttling entirely so unit tests against local httptest servers stay
+	// fast.
+	contentFetchThrottleInterval time.Duration
+
 	// issueClientFactory creates a GitHubIssueClient for a given token.
 	// Overridable in tests to inject a fake client.
 	issueClientFactory func(token string) *GitHubIssueClient
@@ -91,13 +129,14 @@ type AuditSweeper struct {
 // automatically — call Start to begin the scheduled loop.
 func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient, system string) *AuditSweeper {
 	s := &AuditSweeper{
-		db:               db,
-		githubAuth:       githubAuth,
-		githubOrg:        "lucas42",
-		sweepInterval:    6 * time.Hour,
-		system:           system,
-		configyBaseURL:   configyBaseURL,
-		githubAPIBaseURL: githubAPIBaseURL,
+		db:                           db,
+		githubAuth:                   githubAuth,
+		githubOrg:                    "lucas42",
+		sweepInterval:                6 * time.Hour,
+		system:                       system,
+		configyBaseURL:               configyBaseURL,
+		githubAPIBaseURL:             githubAPIBaseURL,
+		contentFetchThrottleInterval: contentFetchThrottleInterval,
 	}
 	s.issueClientFactory = func(token string) *GitHubIssueClient {
 		return NewGitHubIssueClient(s.githubAPIBaseURL, token)
@@ -203,10 +242,14 @@ func (s *AuditSweeper) sweep() error {
 	// Enable in-memory response caching for the duration of this sweep.
 	// This deduplicates identical GitHub API calls made by different conventions
 	// against the same repo (e.g. branch protection fetched 3-5x per repo).
-	// RateLimitTransport sits inside the cache so rate-limit 403s are never
+	// ThrottleTransport paces actual network requests (only cache misses reach
+	// it) so the sweep doesn't fire a fast enough sequential burst to trip
+	// GitHub's secondary rate limit in the first place (lucas42/lucos_repos#433).
+	// RateLimitTransport sits outside the throttle so rate-limit 403s are never
 	// cached — they are either retried (after waiting for reset) or surfaced
 	// as distinct errors rather than being misattributed as permission failures.
-	rateLimitTransport := conventions.NewRateLimitTransport(http.DefaultTransport)
+	throttleTransport := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
+	rateLimitTransport := conventions.NewRateLimitTransport(throttleTransport)
 	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
 	conventions.SetHTTPClient(cachingClient)
@@ -242,6 +285,13 @@ func (s *AuditSweeper) sweep() error {
 	// due to API errors (e.g. rate limiting). A non-zero count means the sweep
 	// has incomplete coverage and should not be reported as successful.
 	skippedCount := 0
+
+	// pendingRetries holds checks that returned an indeterminate result on the
+	// first pass, to be retried once as a batch after the full sweep — a small
+	// transient-skip tail (e.g. a handful of rate-limited requests out of
+	// thousands) shouldn't fail the entire sweep outright when a short wait
+	// and a second attempt would likely clear it (lucas42/lucos_repos#433).
+	var pendingRetries []pendingCheck
 
 	for _, repo := range repos {
 		// Archived repos are intentionally frozen — convention compliance is
@@ -310,66 +360,54 @@ func (s *AuditSweeper) sweep() error {
 			result := convention.Check(ctx)
 
 			if result.Err != nil {
-				// The check could not determine compliance — skip issue creation
-				// and mark the sweep as incomplete so it will be retried.
-				slog.Warn("Convention check indeterminate due to API error",
+				// The check could not determine compliance on this pass — defer it
+				// to the retry-tail pass rather than immediately failing the sweep.
+				slog.Warn("Convention check indeterminate due to API error; will retry after full pass",
 					"repo", repoName, "convention", convention.ID, "error", result.Err)
+				pendingRetries = append(pendingRetries, pendingCheck{
+					repoName:    repoName,
+					convention:  convention,
+					ctx:         ctx,
+					issueClient: issueClient,
+				})
+				continue
+			}
+
+			if s.processCheckResult(repoName, convention, result, issueClient) {
+				skippedCount++
+			}
+		}
+	}
+
+	if len(pendingRetries) > 0 {
+		slog.Info("Retrying convention checks skipped due to API errors",
+			"count", len(pendingRetries), "wait", auditRetryTailDelay)
+		auditRetryTailSleep(auditRetryTailDelay)
+
+		// Use a fresh, uncached client for the retry pass. CachingTransport
+		// caches non-2xx responses too (by design — see
+		// TestCachingTransport_CachesErrorResponses), so replaying the same
+		// convention.Check call through the sweep-wide cachingClient would
+		// just return the same cached failure instead of making a new network
+		// attempt — defeating the retry for any failure that reached here as
+		// a normal non-2xx response rather than a transport-level error
+		// (lucas42/lucos_repos#433).
+		retryThrottle := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
+		retryRateLimit := conventions.NewRateLimitTransport(retryThrottle)
+		conventions.SetHTTPClient(&http.Client{Transport: retryRateLimit})
+
+		for _, pc := range pendingRetries {
+			result := pc.convention.Check(pc.ctx)
+
+			if result.Err != nil {
+				slog.Warn("Convention check still indeterminate after retry",
+					"repo", pc.repoName, "convention", pc.convention.ID, "error", result.Err)
 				skippedCount++
 				continue
 			}
 
-			convInfo := ConventionInfo{
-				ID:          convention.ID,
-				Description: convention.Description,
-				Rationale:   convention.Rationale,
-				Guidance:    convention.Guidance,
-				Detail:      result.Detail,
-			}
-
-			issueURL := ""
-			if !result.Pass {
-				// Ensure an open audit-finding issue exists for this violation.
-				if os.Getenv("ENVIRONMENT") == "production" {
-					var issueErr error
-					issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
-					if issueErr != nil {
-						if isIssuesUnavailableErr(issueErr) {
-							// 403/410 means issues are unavailable (archived or disabled) —
-							// this is an expected state, not an API error. Log and move on.
-							slog.Warn("Issues unavailable for repo, skipping issue creation",
-								"repo", repoName, "convention", convention.ID, "error", issueErr)
-						} else {
-							slog.Warn("Failed to ensure issue exists for failing convention",
-								"repo", repoName, "convention", convention.ID, "error", issueErr)
-							skippedCount++
-						}
-					}
-				} else {
-					slog.Info("Skipping issue creation in non-production environment",
-						"repo", repoName, "convention", convention.ID)
-				}
-			} else {
-				// Convention passes — close any open audit-finding issue.
-				if os.Getenv("ENVIRONMENT") == "production" {
-					if closeErr := issueClient.CloseIssueIfOpen(repoName, convInfo); closeErr != nil {
-						if isIssuesUnavailableErr(closeErr) {
-							slog.Warn("Issues unavailable for repo, skipping issue close",
-								"repo", repoName, "convention", convention.ID, "error", closeErr)
-						} else {
-							// Close failure does not invalidate the sweep result — the
-							// convention check succeeded. Log and continue.
-							slog.Warn("Failed to close audit-finding issue for passing convention",
-								"repo", repoName, "convention", convention.ID, "error", closeErr)
-						}
-					}
-				} else {
-					slog.Debug("Skipping issue close in non-production environment",
-						"repo", repoName, "convention", convention.ID)
-				}
-			}
-
-			if err := s.db.SaveFinding(result, repoName, issueURL); err != nil {
-				slog.Warn("Failed to save finding", "repo", repoName, "convention", convention.ID, "error", err)
+			if s.processCheckResult(pc.repoName, pc.convention, result, pc.issueClient) {
+				skippedCount++
 			}
 		}
 	}
@@ -390,6 +428,69 @@ func (s *AuditSweeper) sweep() error {
 	s.generateAndCommitC4()
 
 	return nil
+}
+
+// processCheckResult records a completed convention check result: ensures or
+// closes the corresponding audit-finding issue (production only) and saves
+// the finding to the database. Returns true if issue creation/closing failed
+// with an error other than "issues unavailable" — meaning the check itself
+// succeeded but its outcome could not be fully applied, so the sweep should
+// still count it as skipped.
+func (s *AuditSweeper) processCheckResult(repoName string, convention conventions.Convention, result conventions.ConventionResult, issueClient *GitHubIssueClient) (skipped bool) {
+	convInfo := ConventionInfo{
+		ID:          convention.ID,
+		Description: convention.Description,
+		Rationale:   convention.Rationale,
+		Guidance:    convention.Guidance,
+		Detail:      result.Detail,
+	}
+
+	issueURL := ""
+	if !result.Pass {
+		// Ensure an open audit-finding issue exists for this violation.
+		if os.Getenv("ENVIRONMENT") == "production" {
+			var issueErr error
+			issueURL, issueErr = issueClient.EnsureIssueExists(repoName, convInfo)
+			if issueErr != nil {
+				if isIssuesUnavailableErr(issueErr) {
+					// 403/410 means issues are unavailable (archived or disabled) —
+					// this is an expected state, not an API error. Log and move on.
+					slog.Warn("Issues unavailable for repo, skipping issue creation",
+						"repo", repoName, "convention", convention.ID, "error", issueErr)
+				} else {
+					slog.Warn("Failed to ensure issue exists for failing convention",
+						"repo", repoName, "convention", convention.ID, "error", issueErr)
+					skipped = true
+				}
+			}
+		} else {
+			slog.Info("Skipping issue creation in non-production environment",
+				"repo", repoName, "convention", convention.ID)
+		}
+	} else {
+		// Convention passes — close any open audit-finding issue.
+		if os.Getenv("ENVIRONMENT") == "production" {
+			if closeErr := issueClient.CloseIssueIfOpen(repoName, convInfo); closeErr != nil {
+				if isIssuesUnavailableErr(closeErr) {
+					slog.Warn("Issues unavailable for repo, skipping issue close",
+						"repo", repoName, "convention", convention.ID, "error", closeErr)
+				} else {
+					// Close failure does not invalidate the sweep result — the
+					// convention check succeeded. Log and continue.
+					slog.Warn("Failed to close audit-finding issue for passing convention",
+						"repo", repoName, "convention", convention.ID, "error", closeErr)
+				}
+			}
+		} else {
+			slog.Debug("Skipping issue close in non-production environment",
+				"repo", repoName, "convention", convention.ID)
+		}
+	}
+
+	if err := s.db.SaveFinding(result, repoName, issueURL); err != nil {
+		slog.Warn("Failed to save finding", "repo", repoName, "convention", convention.ID, "error", err)
+	}
+	return skipped
 }
 
 // fetchRepos fetches the full list of repos in the GitHub org, handling pagination.
