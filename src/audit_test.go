@@ -20,6 +20,13 @@ import (
 // fake server handles both convention-check and issue-management calls.
 func newTestSweeper(t *testing.T, configyServer, githubServer *httptest.Server) *AuditSweeper {
 	t.Helper()
+	// The retry-tail pass sleeps auditRetryTailDelay (30s) before retrying
+	// skipped checks — replace with a no-op so tests exercising that path
+	// don't actually wait.
+	origRetryTailSleep := auditRetryTailSleep
+	auditRetryTailSleep = func(time.Duration) {}
+	t.Cleanup(func() { auditRetryTailSleep = origRetryTailSleep })
+
 	db := openTestDB(t)
 	// Pre-populate the conventions table so SaveFinding doesn't hit FK errors.
 	for _, c := range conventions.All() {
@@ -539,6 +546,89 @@ func TestSweep_StoresFindings(t *testing.T) {
 	}
 	if !found {
 		t.Error("no finding for circleci-config-exists on lucos_photos")
+	}
+}
+
+// TestSweep_TransientSkipRecoversOnRetryTail verifies that a convention check
+// which fails on the first pass but succeeds on the retry-tail pass (e.g. a
+// transient error that had cleared by the time of the retry) does not fail
+// the whole sweep — the "<0.4% partial skip shouldn't fail the entire sweep"
+// fix from lucas42/lucos_repos#433. It also confirms the retry pass genuinely
+// hits the network a second time rather than replaying a cached failure.
+func TestSweep_TransientSkipRecoversOnRetryTail(t *testing.T) {
+	var configCallCount int32
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users/lucas42/repos":
+			json.NewEncoder(w).Encode([]gitHubRepo{
+				{FullName: "lucas42/lucos_photos"},
+			})
+		case "/graphql":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"data":{"repository":{"autoMergeAllowed":true}}}`))
+		case "/repos/lucas42/lucos_photos/contents/.circleci/config.yml":
+			n := atomic.AddInt32(&configCallCount, 1)
+			if n == 1 {
+				// First pass: transient failure.
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			// Retry-tail pass: succeeds.
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(encodedCIConfig()))
+		case "/repos/lucas42/lucos_photos/actions/permissions/fork-pr-contributor-approval":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"approval_policy":"first_time_contributors_new_to_github"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "lucos_photos", Hosts: []string{}}})
+		case "/components":
+			json.NewEncoder(w).Encode([]configyComponent{})
+		case "/scripts":
+			json.NewEncoder(w).Encode([]configyScript{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	s := newTestSweeper(t, configyServer, githubServer)
+	s.githubAuth = &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)}
+
+	if err := s.sweep(); err != nil {
+		t.Fatalf("expected sweep() to succeed after the retry-tail pass recovers the transient skip, got error: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&configCallCount); got < 2 {
+		t.Fatalf("expected the config.yml endpoint to be hit at least twice (initial failure + genuine retry), got %d — "+
+			"a cached failure being replayed instead of a fresh network call would show as 1", got)
+	}
+
+	findings, err := s.db.GetFindings()
+	if err != nil {
+		t.Fatalf("GetFindings failed: %v", err)
+	}
+	found := false
+	for _, f := range findings {
+		if f.Repo == "lucas42/lucos_photos" && f.Convention == "circleci-config-exists" {
+			found = true
+			if !f.Pass {
+				t.Errorf("expected circleci-config-exists to pass after retry, got fail")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("no finding for circleci-config-exists on lucos_photos after retry-tail")
 	}
 }
 

@@ -26,6 +26,28 @@ func SetHTTPClient(c *http.Client) {
 	}
 }
 
+// unexpectedStatusErr builds a descriptive error for an unexpected GitHub API
+// response: it includes the response body (bounded) and rate-limit headers,
+// so a future occurrence is self-diagnosing from the logs alone rather than
+// requiring log archaeology (lucas42/lucos_repos#433). context describes
+// what was being fetched, e.g. "for path.txt in owner/repo".
+//
+// Most rate-limit 403s are already intercepted and retried by
+// RateLimitTransport before reaching call sites that use this helper — it
+// mainly covers genuine non-rate-limit errors (permissions, 404s that aren't
+// separately handled, 5xxs) plus rate-limit 403s from code paths not routed
+// through RateLimitTransport.
+func unexpectedStatusErr(resp *http.Response, context string) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	return fmt.Errorf("unexpected GitHub API status %d %s: body=%q retry-after=%q x-ratelimit-remaining=%q x-ratelimit-reset=%q",
+		resp.StatusCode, context,
+		strings.TrimSpace(string(body)),
+		resp.Header.Get("Retry-After"),
+		resp.Header.Get("X-RateLimit-Remaining"),
+		resp.Header.Get("X-RateLimit-Reset"),
+	)
+}
+
 // RepoType categorises a repository based on its presence in lucos_configy.
 type RepoType string
 
@@ -218,7 +240,7 @@ func GitHubFileExistsFromBase(baseURL, token, repo, path string, ref ...string) 
 	case http.StatusNotFound:
 		return false, nil
 	default:
-		return false, fmt.Errorf("unexpected GitHub API status %d for %s in %s", resp.StatusCode, path, repo)
+		return false, unexpectedStatusErr(resp, fmt.Sprintf("for %s in %s", path, repo))
 	}
 }
 
@@ -277,7 +299,7 @@ func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string)
 	case http.StatusNotFound:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d for %s in %s", resp.StatusCode, path, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("for %s in %s", path, repo))
 	}
 }
 
@@ -339,7 +361,7 @@ func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string) 
 	case http.StatusNotFound:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching branch protection for %s in %s", branch, repo))
 	}
 }
 
@@ -377,7 +399,7 @@ func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string) 
 		// Branch is unprotected or does not exist.
 		return false, nil
 	default:
-		return false, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
+		return false, unexpectedStatusErr(resp, fmt.Sprintf("fetching branch protection for %s in %s", branch, repo))
 	}
 }
 
@@ -442,7 +464,7 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 		// Branch is either unprotected or doesn't exist — treat as no checks.
 		return []string{}, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching branch protection for %s in %s", resp.StatusCode, branch, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching branch protection for %s in %s", branch, repo))
 	}
 }
 
@@ -493,7 +515,7 @@ func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...strin
 	case http.StatusNotFound:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d listing directory %s in %s", resp.StatusCode, path, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("listing directory %s in %s", path, repo))
 	}
 }
 
@@ -535,7 +557,7 @@ func GitHubRepoLanguagesFromBase(baseURL, token, repo string) (map[string]int, e
 	case http.StatusNotFound:
 		return map[string]int{}, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching languages for %s", resp.StatusCode, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching languages for %s", repo))
 	}
 }
 
@@ -585,7 +607,7 @@ func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string) ([]str
 	case http.StatusNotFound:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching commit status for %s/%s", resp.StatusCode, repo, ref)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching commit status for %s/%s", repo, ref))
 	}
 }
 
@@ -634,7 +656,7 @@ func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, er
 	case http.StatusNotFound:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching check runs for %s/%s", resp.StatusCode, repo, ref)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching check runs for %s/%s", repo, ref))
 	}
 }
 
@@ -681,7 +703,7 @@ func GitHubCommitParentsFromBase(baseURL, token, repo, ref string) ([]string, er
 	case http.StatusNotFound:
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching commit %s in %s", resp.StatusCode, ref, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching commit %s in %s", ref, repo))
 	}
 }
 
@@ -1058,7 +1080,7 @@ func gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, store string) (
 	case http.StatusNotFound:
 		return []string{}, nil
 	default:
-		return nil, fmt.Errorf("unexpected GitHub API status %d fetching %s for %s", resp.StatusCode, store, repo)
+		return nil, unexpectedStatusErr(resp, fmt.Sprintf("fetching %s for %s", store, repo))
 	}
 }
 

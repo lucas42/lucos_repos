@@ -43,11 +43,27 @@ type DryRunSummary struct {
 	TotalViolations int `json:"total_violations"`
 }
 
+// dryRunPendingCheck captures everything needed to retry a convention check
+// that returned an indeterminate result on the first pass.
+type dryRunPendingCheck struct {
+	repoName   string
+	convention conventions.Convention
+	ctx        conventions.RepoContext
+}
+
 // runAuditDryRun runs a full convention sweep without creating issues or writing
 // to any database. Findings are written as JSON to stdout.
 func runAuditDryRun() {
 	// Enable in-memory response caching to deduplicate GitHub API calls.
-	cachingTransport := conventions.NewCachingTransport(http.DefaultTransport)
+	// ThrottleTransport paces actual network requests and RateLimitTransport
+	// retries transient rate-limit 403s — the same chain as the production
+	// sweep (audit.go). This path previously used only CachingTransport with
+	// no retry or pacing at all, which is why the audit-dry-run CI check
+	// intermittently failed with a mass of unretried 403s
+	// (lucas42/lucos_repos#433).
+	throttleTransport := conventions.NewThrottleTransport(http.DefaultTransport, contentFetchThrottleInterval)
+	rateLimitTransport := conventions.NewRateLimitTransport(throttleTransport)
+	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
 	conventions.SetHTTPClient(cachingClient)
 	defer conventions.SetHTTPClient(nil)
@@ -91,6 +107,13 @@ func runAuditDryRun() {
 	report := DryRunReport{
 		Repos: map[string]DryRunRepoStatus{},
 	}
+
+	// pendingRetries holds checks that returned an indeterminate result on the
+	// first pass, to be retried once as a batch after the full sweep — the
+	// same "don't fail on a small transient-skip tail" behaviour as the
+	// production sweep (audit.go), applied here too since this dry-run is
+	// exactly the path that hit mass rate-limit 403s on lucas42/lucos_repos#433.
+	var pendingRetries []dryRunPendingCheck
 
 	for _, repo := range repos {
 		if repo.Archived || repo.Fork {
@@ -136,10 +159,13 @@ func runAuditDryRun() {
 			result := convention.Check(ctx)
 
 			if result.Err != nil {
-				slog.Warn("Dry-run: convention check indeterminate",
+				slog.Warn("Dry-run: convention check indeterminate; will retry after full pass",
 					"repo", repoName, "convention", convention.ID, "error", result.Err)
-				repoStatus.Conventions[convention.ID] = DryRunConvStatus{Skipped: true}
-				report.SkippedChecks++
+				pendingRetries = append(pendingRetries, dryRunPendingCheck{
+					repoName:   repoName,
+					convention: convention,
+					ctx:        ctx,
+				})
 				continue
 			}
 
@@ -153,6 +179,43 @@ func runAuditDryRun() {
 		}
 
 		report.Repos[repoName] = repoStatus
+	}
+
+	if len(pendingRetries) > 0 {
+		slog.Info("Dry-run: retrying convention checks skipped due to API errors",
+			"count", len(pendingRetries), "wait", auditRetryTailDelay)
+		auditRetryTailSleep(auditRetryTailDelay)
+
+		// Use a fresh, uncached client for the retry pass — see the matching
+		// comment in audit.go's sweep(): CachingTransport caches non-2xx
+		// responses too, so reusing the cached client here would just replay
+		// the same failure instead of hitting the network again
+		// (lucas42/lucos_repos#433).
+		retryThrottle := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
+		retryRateLimit := conventions.NewRateLimitTransport(retryThrottle)
+		conventions.SetHTTPClient(&http.Client{Transport: retryRateLimit})
+
+		for _, pc := range pendingRetries {
+			result := pc.convention.Check(pc.ctx)
+			repoStatus := report.Repos[pc.repoName]
+
+			if result.Err != nil {
+				slog.Warn("Dry-run: convention check still indeterminate after retry",
+					"repo", pc.repoName, "convention", pc.convention.ID, "error", result.Err)
+				repoStatus.Conventions[pc.convention.ID] = DryRunConvStatus{Skipped: true}
+				report.SkippedChecks++
+			} else {
+				repoStatus.Conventions[pc.convention.ID] = DryRunConvStatus{
+					Pass:   result.Pass,
+					Detail: result.Detail,
+				}
+				if !result.Pass {
+					repoStatus.Compliant = false
+				}
+			}
+
+			report.Repos[pc.repoName] = repoStatus
+		}
 	}
 
 	// Compute summary.

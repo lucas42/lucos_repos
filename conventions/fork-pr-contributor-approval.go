@@ -73,7 +73,7 @@ func GitHubForkPRContributorApprovalFromBase(baseURL, token, repo string) (strin
 		}
 		return result.ApprovalPolicy, nil
 	default:
-		return "", fmt.Errorf("unexpected GitHub API status %d fetching fork-pr-contributor-approval for %s", resp.StatusCode, repo)
+		return "", unexpectedStatusErr(resp, fmt.Sprintf("fetching fork-pr-contributor-approval for %s", repo))
 	}
 }
 

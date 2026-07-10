@@ -153,6 +153,71 @@ func TestHandleRateLimitError_NoResetHeader(t *testing.T) {
 	}
 }
 
+// TestHandleRateLimitError_SecondaryLimit_RetryAfter verifies that a secondary
+// rate-limit 403 (Retry-After header, no X-RateLimit-Reset — the fingerprint
+// GitHub actually returns for abuse-detection limits, per
+// lucas42/lucos_repos#433) is retried using Retry-After rather than being
+// treated as unretryable.
+func TestHandleRateLimitError_SecondaryLimit_RetryAfter(t *testing.T) {
+	body, _ := json.Marshal(rateLimitBody{Message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."})
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Retry-After", "5")
+	resp := rec.Result()
+
+	var sleptFor time.Duration
+	origSleep := rateLimitSleep
+	rateLimitSleep = func(d time.Duration) { sleptFor = d }
+	defer func() { rateLimitSleep = origSleep }()
+
+	err := handleRateLimitError(resp, body)
+	if err != nil {
+		t.Errorf("expected nil error for Retry-After within max wait, got: %v", err)
+	}
+	if sleptFor != 5*time.Second {
+		t.Errorf("expected sleep of 5s from Retry-After, got %s", sleptFor)
+	}
+}
+
+// TestHandleRateLimitError_SecondaryLimit_RetryAfterTooLong verifies a
+// Retry-After value beyond rateLimitMaxWait is treated the same as an
+// over-long X-RateLimit-Reset wait: an error, no sleep.
+func TestHandleRateLimitError_SecondaryLimit_RetryAfterTooLong(t *testing.T) {
+	body, _ := json.Marshal(rateLimitBody{Message: "You have exceeded a secondary rate limit"})
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Retry-After", "3600") // 1 hour, exceeds rateLimitMaxWait (5 min)
+	resp := rec.Result()
+
+	slept := false
+	origSleep := rateLimitSleep
+	rateLimitSleep = func(d time.Duration) { slept = true }
+	defer func() { rateLimitSleep = origSleep }()
+
+	err := handleRateLimitError(resp, body)
+	if err == nil {
+		t.Error("expected error when Retry-After exceeds max wait, got nil")
+	}
+	if slept {
+		t.Error("expected no sleep when Retry-After exceeds max wait")
+	}
+}
+
+// TestHandleRateLimitError_UnretryableIncludesDiagnostic verifies the
+// observability fix: when a rate-limit 403 cannot be retried, the error
+// includes the response body and rate-limit headers.
+func TestHandleRateLimitError_UnretryableIncludesDiagnostic(t *testing.T) {
+	body, _ := json.Marshal(rateLimitBody{Message: "API rate limit exceeded for installation ID 98765"})
+	rec := httptest.NewRecorder()
+	resp := rec.Result()
+
+	err := handleRateLimitError(resp, body)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "installation ID 98765") {
+		t.Errorf("expected error to include response body, got: %v", err)
+	}
+}
+
 // TestFetchIssuesList_RateLimitRetry verifies that fetchIssuesList retries after
 // a 403 rate limit response and succeeds on the second attempt.
 func TestFetchIssuesList_RateLimitRetry(t *testing.T) {
