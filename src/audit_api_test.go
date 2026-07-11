@@ -136,7 +136,7 @@ func TestAuditHandler_NoBearerToken(t *testing.T) {
 	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
 	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", v)
+	handler := newAuditHandler(db, nil, "", "", v)
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
 	w := httptest.NewRecorder()
 
@@ -153,7 +153,7 @@ func TestAuditHandler_InvalidToken(t *testing.T) {
 	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
 	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", v)
+	handler := newAuditHandler(db, nil, "", "", v)
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
 	w := httptest.NewRecorder()
@@ -171,7 +171,7 @@ func TestAuditHandler_WrongOwner(t *testing.T) {
 	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
 	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", v)
+	handler := newAuditHandler(db, nil, "", "", v)
 	tokenStr := auditTestToken(t, "k1", key, "evil-user")
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
@@ -190,7 +190,7 @@ func TestAuditHandler_KeySchemeRejected(t *testing.T) {
 	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
 	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", v)
+	handler := newAuditHandler(db, nil, "", "", v)
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
 	req.Header.Set("Authorization", "Key some-key")
 	w := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestAuditHandler_UnknownRepo(t *testing.T) {
 	srv := auditTestJWKSServer(t, "k1", &key.PublicKey)
 	v := newAuditTestValidator(t, srv.URL)
 
-	handler := newAuditHandler(db, nil, "", v)
+	handler := newAuditHandler(db, nil, "", "", v)
 	tokenStr := auditTestToken(t, "k1", key, "lucas42")
 	req := httptest.NewRequest("POST", "/api/audit/lucas42/unknown_repo?ref=my-branch", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
@@ -219,57 +219,6 @@ func TestAuditHandler_UnknownRepo(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown repo, got %d", w.Code)
 	}
-}
-
-func TestFetchConfigyRepoInfo(t *testing.T) {
-	configySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/systems" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]configySystem{
-			{ID: "lucos_photos", Hosts: []string{"avalon", "dagobah"}, UnsupervisedAgentCode: false},
-			{ID: "lucos_arachne", Hosts: []string{"avalon"}, UnsupervisedAgentCode: true},
-		})
-	}))
-	t.Cleanup(configySrv.Close)
-
-	t.Run("known system", func(t *testing.T) {
-		hosts, unsupervised, err := fetchConfigyRepoInfo(configySrv.URL, "lucas42/lucos_photos")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(hosts) != 2 || hosts[0] != "avalon" || hosts[1] != "dagobah" {
-			t.Errorf("expected [avalon dagobah], got %v", hosts)
-		}
-		if unsupervised {
-			t.Error("expected unsupervisedAgentCode=false")
-		}
-	})
-
-	t.Run("unsupervised system", func(t *testing.T) {
-		_, unsupervised, err := fetchConfigyRepoInfo(configySrv.URL, "lucas42/lucos_arachne")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !unsupervised {
-			t.Error("expected unsupervisedAgentCode=true")
-		}
-	})
-
-	t.Run("unknown repo", func(t *testing.T) {
-		hosts, unsupervised, err := fetchConfigyRepoInfo(configySrv.URL, "lucas42/unknown_thing")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if hosts != nil {
-			t.Errorf("expected nil hosts for unknown repo, got %v", hosts)
-		}
-		if unsupervised {
-			t.Error("expected unsupervisedAgentCode=false for unknown repo")
-		}
-	})
 }
 
 func TestAuditRateLimiter(t *testing.T) {
@@ -287,5 +236,58 @@ func TestAuditRateLimiter(t *testing.T) {
 	// Different repo should still work.
 	if !rl.allow("repo2") {
 		t.Error("first request for different repo should be allowed")
+	}
+}
+
+// TestAuditHandler_UsesLiveTypeNotBaselineType verifies that RepoContext.Type
+// (and the AppliesToType gate) comes from a fresh configy fetch, not the
+// baseline's DB-cached value (#453). The repo's baseline says "component" but
+// configy now reports it as a system — a system-only convention
+// (container-naming) should become selectable as a result.
+func TestAuditHandler_UsesLiveTypeNotBaselineType(t *testing.T) {
+	db := openTestDB(t)
+	db.UpsertRepo("lucas42/test_repo", "component", false)
+	db.UpsertConvention("in-lucos-configy", "In lucos configy")
+	db.SaveFinding(conventions.ConventionResult{Convention: "in-lucos-configy", Pass: true, Detail: "ok"}, "lucas42/test_repo", "")
+
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	jwksSrv := auditTestJWKSServer(t, "k1", &key.PublicKey)
+	v := newAuditTestValidator(t, jwksSrv.URL)
+	tokenStr := auditTestToken(t, "k1", key, "lucas42")
+
+	ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// docker-compose.yml (and everything else) 404s — container-naming
+		// treats a missing compose file as a pass, proving it was selected.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ghServer.Close()
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/systems" {
+			json.NewEncoder(w).Encode([]configySystem{{ID: "test_repo", Hosts: []string{"avalon"}}})
+			return
+		}
+		json.NewEncoder(w).Encode([]struct{}{})
+	}))
+	defer configyServer.Close()
+
+	handler := newAuditHandler(db, fakeGitHubAuth(t), ghServer.URL, configyServer.URL, v)
+	req := httptest.NewRequest("POST", "/api/audit/lucas42/test_repo?ref=my-branch", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp auditResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if _, ok := resp.Details["container-naming"]; !ok {
+		t.Error("expected container-naming (system-only convention) to be selected using the live Type, not the stale 'component' baseline")
 	}
 }

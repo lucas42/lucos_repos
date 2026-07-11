@@ -23,6 +23,11 @@ const configyBaseURL = "https://configy.l42.eu"
 // It can be overridden in tests via AuditSweeper.githubAPIBaseURL.
 const githubAPIBaseURL = "https://api.github.com"
 
+// defaultGitHubOrg is the GitHub org/user all lucos repos live under. Shared
+// by AuditSweeper and the standalone fetchRepoTypesFrom (used directly by the
+// rerun/audit API handlers — see #453).
+const defaultGitHubOrg = "lucas42"
+
 // contentFetchThrottleInterval paces convention-check content-API requests
 // (Contents, branch protection, languages, etc.) to no more than one every
 // this long. A full sweep fires ~30 conventions × ~90 repos of these
@@ -141,7 +146,7 @@ func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient, system string) *Audit
 	s := &AuditSweeper{
 		db:                           db,
 		githubAuth:                   githubAuth,
-		githubOrg:                    "lucas42",
+		githubOrg:                    defaultGitHubOrg,
 		sweepInterval:                6 * time.Hour,
 		system:                       system,
 		c4OutputRepo:                 "lucas42/lucos_architecture_models",
@@ -586,26 +591,36 @@ func (s *AuditSweeper) fetchReposPage(token string, page, perPage int) ([]gitHub
 // fetchRepoTypes fetches systems, components, and scripts from lucos_configy
 // and returns a map of repo full_name (e.g. "lucas42/lucos_photos") to repoInfo.
 func (s *AuditSweeper) fetchRepoTypes() (map[string]repoInfo, error) {
+	return fetchRepoTypesFrom(s.configyBaseURL, s.githubOrg)
+}
+
+// fetchRepoTypesFrom fetches systems, components, and scripts from lucos_configy
+// and returns a map of repo full_name (e.g. "lucas42/lucos_photos") to repoInfo.
+// Standalone (not an AuditSweeper method) so the rerun/audit API handlers can
+// recompute a fresh Type map on demand, not just a full sweep (#453) — a
+// per-repo Type derived from the last full sweep's DB cache can't reflect a
+// configy registration change made since.
+func fetchRepoTypesFrom(configyBaseURL, githubOrg string) (map[string]repoInfo, error) {
 	result := map[string]repoInfo{}
 
-	systems, err := s.fetchConfigySystems()
+	systems, err := fetchConfigySystemsFrom(configyBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch configy systems: %w", err)
 	}
 	for _, sys := range systems {
-		result[s.githubOrg+"/"+sys.ID] = repoInfo{
+		result[githubOrg+"/"+sys.ID] = repoInfo{
 			Type:                  conventions.RepoTypeSystem,
 			Hosts:                 sys.Hosts,
 			UnsupervisedAgentCode: sys.UnsupervisedAgentCode,
 		}
 	}
 
-	components, err := s.fetchConfigyComponents()
+	components, err := fetchConfigyComponentsFrom(configyBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch configy components: %w", err)
 	}
 	for _, comp := range components {
-		key := s.githubOrg + "/" + comp.ID
+		key := githubOrg + "/" + comp.ID
 		if _, exists := result[key]; exists {
 			// Already classified under another type — mark as duplicate.
 			result[key] = repoInfo{Type: conventions.RepoTypeDuplicate}
@@ -614,12 +629,12 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]repoInfo, error) {
 		}
 	}
 
-	scripts, err := s.fetchConfigyScripts()
+	scripts, err := fetchConfigyScriptsFrom(configyBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch configy scripts: %w", err)
 	}
 	for _, script := range scripts {
-		key := s.githubOrg + "/" + script.ID
+		key := githubOrg + "/" + script.ID
 		if _, exists := result[key]; exists {
 			// Already classified under another type — mark as duplicate.
 			result[key] = repoInfo{Type: conventions.RepoTypeDuplicate}
@@ -633,7 +648,12 @@ func (s *AuditSweeper) fetchRepoTypes() (map[string]repoInfo, error) {
 
 // fetchConfigySystems fetches the list of systems from the configy API.
 func (s *AuditSweeper) fetchConfigySystems() ([]configySystem, error) {
-	url := s.configyBaseURL + "/systems"
+	return fetchConfigySystemsFrom(s.configyBaseURL)
+}
+
+// fetchConfigySystemsFrom fetches the list of systems from the configy API at configyBaseURL.
+func fetchConfigySystemsFrom(configyBaseURL string) ([]configySystem, error) {
+	url := configyBaseURL + "/systems"
 	resp, err := http.Get(url) //nolint:gosec // URL comes from trusted config
 	if err != nil {
 		return nil, fmt.Errorf("configy systems request failed: %w", err)
@@ -653,7 +673,12 @@ func (s *AuditSweeper) fetchConfigySystems() ([]configySystem, error) {
 
 // fetchConfigyComponents fetches the list of components from the configy API.
 func (s *AuditSweeper) fetchConfigyComponents() ([]configyComponent, error) {
-	url := s.configyBaseURL + "/components"
+	return fetchConfigyComponentsFrom(s.configyBaseURL)
+}
+
+// fetchConfigyComponentsFrom fetches the list of components from the configy API at configyBaseURL.
+func fetchConfigyComponentsFrom(configyBaseURL string) ([]configyComponent, error) {
+	url := configyBaseURL + "/components"
 	resp, err := http.Get(url) //nolint:gosec // URL comes from trusted config
 	if err != nil {
 		return nil, fmt.Errorf("configy components request failed: %w", err)
@@ -673,7 +698,12 @@ func (s *AuditSweeper) fetchConfigyComponents() ([]configyComponent, error) {
 
 // fetchConfigyScripts fetches the list of scripts from the configy API.
 func (s *AuditSweeper) fetchConfigyScripts() ([]configyScript, error) {
-	url := s.configyBaseURL + "/scripts"
+	return fetchConfigyScriptsFrom(s.configyBaseURL)
+}
+
+// fetchConfigyScriptsFrom fetches the list of scripts from the configy API at configyBaseURL.
+func fetchConfigyScriptsFrom(configyBaseURL string) ([]configyScript, error) {
+	url := configyBaseURL + "/scripts"
 	resp, err := http.Get(url) //nolint:gosec // URL comes from trusted config
 	if err != nil {
 		return nil, fmt.Errorf("configy scripts request failed: %w", err)
