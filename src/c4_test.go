@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,7 +116,7 @@ func TestParseLoganneProducers_Basic(t *testing.T) {
 		"lucos_arachne": {"ingestComplete"},
 	}
 	sysSet := map[string]bool{"lucos_photos": true, "lucos_arachne": true, "lucos_loganne": true}
-	edges, divs := parseLoganneProducers(raw, sysSet)
+	edges, divs := parseLoganneProducers(raw, sysSet, "lucas42")
 	if len(divs) != 0 {
 		t.Errorf("expected no divergences, got: %v", divs)
 	}
@@ -138,12 +139,18 @@ func TestParseLoganneProducers_UnknownSourceRaisesDivergence(t *testing.T) {
 		"unknown_system": {"someEvent"},
 	}
 	sysSet := map[string]bool{"lucos_photos": true}
-	edges, divs := parseLoganneProducers(raw, sysSet)
+	edges, divs := parseLoganneProducers(raw, sysSet, "lucas42")
 	if len(edges) != 0 {
 		t.Errorf("expected no edges for unknown source, got %d", len(edges))
 	}
-	if len(divs) != 1 || !strings.Contains(divs[0], "unknown_system") {
+	if len(divs) != 1 || !strings.Contains(divs[0].Message, "unknown_system") {
 		t.Errorf("expected divergence mentioning unknown_system, got: %v", divs)
+	}
+	if divs[0].Repo != "lucas42/lucos_loganne" {
+		t.Errorf("expected divergence attributed to lucas42/lucos_loganne, got %q", divs[0].Repo)
+	}
+	if divs[0].ID == "" {
+		t.Errorf("expected a non-empty stable ID for the divergence")
 	}
 }
 
@@ -258,9 +265,11 @@ func TestGenerateC4Divergences_NoDivergences(t *testing.T) {
 // when both divergences and unreachable systems are present.
 func TestGenerateC4Divergences_WithDivergencesAndUnreachable(t *testing.T) {
 	m := c4Model{
-		divergences: []string{
-			"- `tfluke` (configy) reports `system: tfluke_app` in /_info on app.tfluke.uk",
-			"- loganne event `unknown_event` -> `gone.l42.eu` has no matching configy system",
+		divergences: []c4Divergence{
+			{Repo: "lucas42/tfluke", ID: "c4-info-system-name-divergence",
+				Message: "- `tfluke` (configy) reports `system: tfluke_app` in /_info on app.tfluke.uk"},
+			{Repo: "lucas42/lucos_loganne", ID: "c4-loganne-webhook-target-unknown_event-gone_l42_eu",
+				Message: "- loganne event `unknown_event` -> `gone.l42.eu` has no matching configy system"},
 		},
 		unreachable: []string{"lucos_dns", "lucos_dns_secondary"},
 	}
@@ -298,7 +307,7 @@ func TestParseLoganneWebhooks_BasicParsing(t *testing.T) {
 		"monitoring.l42.eu":     "lucos_monitoring",
 	}
 
-	edges, divs := parseLoganneWebhooks(webhooksJSON, domain2sys)
+	edges, divs := parseLoganneWebhooks(webhooksJSON, domain2sys, "lucas42")
 	if len(divs) != 0 {
 		t.Errorf("expected no divergences, got: %v", divs)
 	}
@@ -330,26 +339,29 @@ func TestParseLoganneWebhooks_UnknownDomainRaisesDivergence(t *testing.T) {
 	webhooksJSON := []byte(`{
 		"trackAdded": ["https://unknown.l42.eu/webhook"]
 	}`)
-	edges, divs := parseLoganneWebhooks(webhooksJSON, map[string]string{})
+	edges, divs := parseLoganneWebhooks(webhooksJSON, map[string]string{}, "lucas42")
 	if len(edges) != 0 {
 		t.Errorf("expected no edges for unknown domain, got %d", len(edges))
 	}
 	if len(divs) != 1 {
 		t.Errorf("expected 1 divergence for unknown domain, got %d: %v", len(divs), divs)
 	}
-	if !strings.Contains(divs[0], "unknown.l42.eu") {
-		t.Errorf("divergence should mention the unknown domain, got: %q", divs[0])
+	if !strings.Contains(divs[0].Message, "unknown.l42.eu") {
+		t.Errorf("divergence should mention the unknown domain, got: %q", divs[0].Message)
+	}
+	if divs[0].Repo != "lucas42/lucos_loganne" {
+		t.Errorf("expected divergence attributed to lucas42/lucos_loganne, got %q", divs[0].Repo)
 	}
 }
 
 // TestParseLoganneWebhooks_InvalidJSON verifies that a parse error is reported
 // as a divergence and no edges are returned.
 func TestParseLoganneWebhooks_InvalidJSON(t *testing.T) {
-	edges, divs := parseLoganneWebhooks([]byte("{not valid json"), map[string]string{})
+	edges, divs := parseLoganneWebhooks([]byte("{not valid json"), map[string]string{}, "lucas42")
 	if len(edges) != 0 {
 		t.Errorf("expected no edges for invalid JSON, got %d", len(edges))
 	}
-	if len(divs) != 1 || !strings.Contains(divs[0], "failed to parse") {
+	if len(divs) != 1 || !strings.Contains(divs[0].Message, "failed to parse") {
 		t.Errorf("expected parse-error divergence, got: %v", divs)
 	}
 }
@@ -362,7 +374,7 @@ func TestParseLoganneWebhooks_DeduplicatesDivergences(t *testing.T) {
 		"event1": ["https://gone.l42.eu/a"],
 		"event2": ["https://gone.l42.eu/b"]
 	}`)
-	_, divs := parseLoganneWebhooks(webhooksJSON, map[string]string{})
+	_, divs := parseLoganneWebhooks(webhooksJSON, map[string]string{}, "lucas42")
 	if len(divs) != 2 {
 		// Each (event, domain) pair is distinct so we should have 2 divergences.
 		t.Errorf("expected 2 divergences (one per event), got %d: %v", len(divs), divs)
@@ -844,4 +856,83 @@ func TestGenerateAndCommitC4_ReturnsErrorOnPutFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the artifact write-back PUT fails")
 	}
+}
+
+// TestRouteC4DivergencesToIssues_CreatesAndClosesIssues verifies that a
+// current divergence gets an audit-finding issue created, while a repo with
+// no current divergence but a stale open "c4-" issue gets it closed (#425).
+func TestRouteC4DivergencesToIssues_CreatesAndClosesIssues(t *testing.T) {
+	var created []string
+	var closedIssueNumbers []int
+	var commentedIssueNumbers []int
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/lucas42/lucos_photos/issues":
+			// No existing open or closed issues for lucos_photos.
+			json.NewEncoder(w).Encode([]gitHubIssue{})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/lucas42/lucos_photos/issues":
+			body, _ := io.ReadAll(r.Body)
+			var req createIssueRequest
+			json.Unmarshal(body, &req)
+			created = append(created, req.Title)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(gitHubIssue{Number: 1, HTMLURL: "https://github.com/lucas42/lucos_photos/issues/1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/lucas42/lucos_arachne/issues":
+			// lucos_arachne has a stale open C4-divergence issue that should close.
+			json.NewEncoder(w).Encode([]gitHubIssue{
+				{Number: 55, HTMLURL: "https://github.com/lucas42/lucos_arachne/issues/55",
+					Title: "[Convention] c4-info-system-name-divergence: C4 model divergence", State: "open"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/lucas42/lucos_arachne/issues/55/comments":
+			commentedIssueNumbers = append(commentedIssueNumbers, 55)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/lucas42/lucos_arachne/issues/55":
+			closedIssueNumbers = append(closedIssueNumbers, 55)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/lucas42/lucos_loganne/issues":
+			json.NewEncoder(w).Encode([]gitHubIssue{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	s := &AuditSweeper{
+		githubOrg:        "lucas42",
+		githubAPIBaseURL: githubServer.URL,
+	}
+	s.issueClientFactory = func(token string) *GitHubIssueClient {
+		return NewGitHubIssueClient(githubServer.URL, token)
+	}
+
+	systems := []configySystem{{ID: "lucos_photos"}, {ID: "lucos_arachne"}}
+	divergences := []c4Divergence{
+		{Repo: "lucas42/lucos_photos", ID: "c4-info-system-name-divergence", Message: "- photos divergence"},
+	}
+
+	s.routeC4DivergencesToIssues("fake-token", systems, divergences)
+
+	if len(created) != 1 || !strings.Contains(created[0], "c4-info-system-name-divergence") {
+		t.Errorf("expected one issue created for lucos_photos's divergence, got: %v", created)
+	}
+	if len(closedIssueNumbers) != 1 || closedIssueNumbers[0] != 55 {
+		t.Errorf("expected lucos_arachne's stale issue #55 to be closed, got: %v", closedIssueNumbers)
+	}
+	if len(commentedIssueNumbers) != 1 {
+		t.Errorf("expected a closing comment on issue #55, got: %v", commentedIssueNumbers)
+	}
+}
+
+// TestRouteC4DivergencesToIssues_NilFactoryDoesNotPanic verifies that a nil
+// issueClientFactory (e.g. an AuditSweeper built without NewAuditSweeper, as
+// several other tests in this file do) is handled gracefully rather than
+// panicking.
+func TestRouteC4DivergencesToIssues_NilFactoryDoesNotPanic(t *testing.T) {
+	s := &AuditSweeper{githubOrg: "lucas42"}
+	s.routeC4DivergencesToIssues("fake-token",
+		[]configySystem{{ID: "lucos_photos"}},
+		[]c4Divergence{{Repo: "lucas42/lucos_photos", ID: "c4-info-system-name-divergence", Message: "- x"}})
+	// Should not panic.
 }

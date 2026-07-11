@@ -56,6 +56,19 @@ type c4InfoResponse struct {
 	Checks map[string]c4InfoCheck `json:"checks"`
 }
 
+// c4Divergence is a single detected inconsistency between C4 data sources
+// (ADR-0006 §3), annotated so it can be both rendered into divergences.md and
+// routed through the audit-finding issue mechanism (ADR-0004, #425): Repo is
+// the "{owner}/{repo}" the finding is attributed to, ID is a stable,
+// convention-like identifier unique to this specific divergence instance
+// (used to open/close its tracked issue across sweeps), and Message is the
+// human-readable line used both in the issue body and divergences.md.
+type c4Divergence struct {
+	Repo    string
+	ID      string
+	Message string
+}
+
 // c4Model holds the complete derived C4 model ready for rendering.
 type c4Model struct {
 	systems       []configySystem  // sorted by ID
@@ -63,7 +76,7 @@ type c4Model struct {
 	syncEdges     []c4SyncEdge     // sorted by (From, To)
 	asyncEdges    []c4AsyncEdge    // sorted by (Consumer, Event)
 	producerEdges []c4ProducerEdge // sorted by (Source, Event)
-	divergences   []string         // sorted; each line starts with "- "
+	divergences   []c4Divergence   // sorted by Message
 	unreachable   []string         // sorted system IDs that did not respond to /_info
 }
 
@@ -186,7 +199,11 @@ func generateC4Divergences(m c4Model) string {
 	if len(m.divergences) == 0 {
 		b.WriteString("None.")
 	} else {
-		b.WriteString(strings.Join(m.divergences, "\n"))
+		lines := make([]string, len(m.divergences))
+		for i, d := range m.divergences {
+			lines[i] = d.Message
+		}
+		b.WriteString(strings.Join(lines, "\n"))
 	}
 	b.WriteString("\n\nUnreachable /_info: ")
 	if len(m.unreachable) == 0 {
@@ -268,14 +285,20 @@ func probeLoganneProducers(domain string, client *http.Client) (map[string][]str
 }
 
 // parseLoganneProducers converts the raw /producers map into sorted producer
-// edges, recording a divergence for any source that isn't in the configy sysSet.
-func parseLoganneProducers(raw map[string][]string, sysSet map[string]bool) ([]c4ProducerEdge, []string) {
+// edges, recording a divergence for any source that isn't in the configy
+// sysSet. Divergences are attributed to lucos_loganne — it's loganne's
+// observed /producers data that disagrees with configy, not any specific
+// unrecognised source's own repo (which may not even be a real system).
+func parseLoganneProducers(raw map[string][]string, sysSet map[string]bool, githubOrg string) ([]c4ProducerEdge, []c4Divergence) {
 	var edges []c4ProducerEdge
-	var divergences []string
+	var divergences []c4Divergence
 	for source, types := range raw {
 		if !sysSet[source] {
-			divergences = append(divergences,
-				fmt.Sprintf("- loganne producer `%s` is not a known configy system", source))
+			divergences = append(divergences, c4Divergence{
+				Repo:    githubOrg + "/lucos_loganne",
+				ID:      "c4-loganne-producer-" + dslIdent(source),
+				Message: fmt.Sprintf("- loganne producer `%s` is not a known configy system", source),
+			})
 			continue
 		}
 		for _, eventType := range types {
@@ -288,22 +311,28 @@ func parseLoganneProducers(raw map[string][]string, sysSet map[string]bool) ([]c
 		}
 		return edges[i].Event < edges[j].Event
 	})
-	sort.Strings(divergences)
+	sort.Slice(divergences, func(i, j int) bool { return divergences[i].Message < divergences[j].Message })
 	return edges, divergences
 }
 
 // parseLoganneWebhooks parses loganne's webhooks-config.json and returns a
-// sorted list of async edges (event → consumer system) and any divergence
-// messages for webhook targets that don't map to a known configy system.
-// domain2sys maps public domains (e.g. "arachne.l42.eu") to system IDs.
-func parseLoganneWebhooks(data []byte, domain2sys map[string]string) ([]c4AsyncEdge, []string) {
+// sorted list of async edges (event → consumer system) and any divergences
+// for webhook targets that don't map to a known configy system. Divergences
+// are attributed to lucos_loganne — its own webhooks-config.json is what
+// references a domain configy doesn't recognise. domain2sys maps public
+// domains (e.g. "arachne.l42.eu") to system IDs.
+func parseLoganneWebhooks(data []byte, domain2sys map[string]string, githubOrg string) ([]c4AsyncEdge, []c4Divergence) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, []string{"- failed to parse loganne webhooks-config.json: " + err.Error()}
+		return nil, []c4Divergence{{
+			Repo:    githubOrg + "/lucos_loganne",
+			ID:      "c4-loganne-webhooks-config-unparseable",
+			Message: "- failed to parse loganne webhooks-config.json: " + err.Error(),
+		}}
 	}
 
 	var edges []c4AsyncEdge
-	var divergences []string
+	var divergences []c4Divergence
 	seenDivergences := make(map[string]bool)
 
 	for key, val := range raw {
@@ -326,10 +355,14 @@ func parseLoganneWebhooks(data []byte, domain2sys map[string]string) ([]c4AsyncE
 			dom := parts[2]
 			sysID, ok := domain2sys[dom]
 			if !ok {
-				msg := fmt.Sprintf("- loganne event `%s` -> `%s` has no matching configy system", event, dom)
-				if !seenDivergences[msg] {
-					seenDivergences[msg] = true
-					divergences = append(divergences, msg)
+				id := "c4-loganne-webhook-target-" + dslIdent(event) + "-" + dslIdent(dom)
+				if !seenDivergences[id] {
+					seenDivergences[id] = true
+					divergences = append(divergences, c4Divergence{
+						Repo:    githubOrg + "/lucos_loganne",
+						ID:      id,
+						Message: fmt.Sprintf("- loganne event `%s` -> `%s` has no matching configy system", event, dom),
+					})
 				}
 				continue
 			}
@@ -343,7 +376,7 @@ func parseLoganneWebhooks(data []byte, domain2sys map[string]string) ([]c4AsyncE
 		}
 		return edges[i].Event < edges[j].Event
 	})
-	sort.Strings(divergences)
+	sort.Slice(divergences, func(i, j int) bool { return divergences[i].Message < divergences[j].Message })
 	return edges, divergences
 }
 
@@ -501,7 +534,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		return errors.New("loganne webhooks-config.json not found")
 	}
 
-	asyncEdges, asyncDivergences := parseLoganneWebhooks([]byte(loganneFile.Content), domain2sys)
+	asyncEdges, asyncDivergences := parseLoganneWebhooks([]byte(loganneFile.Content), domain2sys, s.githubOrg)
 
 	// Shared HTTP client for all live endpoint probes (/_info and /producers).
 	infoClient := &http.Client{Timeout: c4InfoTimeout}
@@ -510,7 +543,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 	// This is non-critical: failure is logged and produces an empty producer set,
 	// not a sweep error. The loganne domain is resolved from the domain2sys map.
 	var producerEdges []c4ProducerEdge
-	var producerDivergences []string
+	var producerDivergences []c4Divergence
 	loganneDomain := ""
 	for d, id := range domain2sys {
 		if id == "lucos_loganne" {
@@ -523,7 +556,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		if probeErr != nil {
 			slog.Warn("C4: failed to probe loganne /producers", "error", probeErr)
 		} else {
-			producerEdges, producerDivergences = parseLoganneProducers(raw, sysSet)
+			producerEdges, producerDivergences = parseLoganneProducers(raw, sysSet, s.githubOrg)
 		}
 	} else {
 		slog.Warn("C4: lucos_loganne has no domain in configy; skipping /producers probe")
@@ -531,7 +564,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 
 	// 3. Probe /_info for each system that has a public domain.
 	var syncEdges []c4SyncEdge
-	var syncDivergences []string
+	var syncDivergences []c4Divergence
 	var unreachable []string
 
 	for _, sys := range systems {
@@ -545,11 +578,17 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 			unreachable = append(unreachable, sys.ID)
 			continue
 		}
-		// Flag a divergence if the reported system name disagrees with the configy key.
+		// Flag a divergence if the reported system name disagrees with the configy
+		// key. Attributed to the system's own repo — it's that system's own
+		// /_info that disagrees with the canonical configy key (#425).
 		if reportedName != "" && reportedName != sys.ID {
-			syncDivergences = append(syncDivergences, fmt.Sprintf(
-				"- `%s` (configy) reports `system: %s` in /_info on %s",
-				sys.ID, reportedName, sys.Domain))
+			syncDivergences = append(syncDivergences, c4Divergence{
+				Repo: s.githubOrg + "/" + sys.ID,
+				ID:   "c4-info-system-name-divergence",
+				Message: fmt.Sprintf(
+					"- `%s` (configy) reports `system: %s` in /_info on %s",
+					sys.ID, reportedName, sys.Domain),
+			})
 		}
 		// ADR-0006 §3: loganne's /_info dependsOn edges are the broker/alert-suppression
 		// relationship — they are NOT sync dependencies. Skip them here; the loganne
@@ -571,8 +610,16 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 
 	allDivergences := append(syncDivergences, asyncDivergences...)
 	allDivergences = append(allDivergences, producerDivergences...)
-	sort.Strings(allDivergences)
+	sort.Slice(allDivergences, func(i, j int) bool { return allDivergences[i].Message < allDivergences[j].Message })
 	sort.Strings(unreachable)
+
+	// Route each divergence through the audit-finding issue mechanism
+	// (ADR-0004), so model drift raises/clears a tracked issue exactly as a
+	// convention breach does (#425). Uses the estate-read App's token — the
+	// same one the main sweep already uses for ordinary convention issues, no
+	// new privilege needed. Non-critical: errors are logged inside and don't
+	// affect the rest of C4 generation/write-back.
+	s.routeC4DivergencesToIssues(token, systems, allDivergences)
 
 	model := c4Model{
 		systems:       systems,
@@ -651,4 +698,85 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		}
 	}
 	return writeErr
+}
+
+// c4DivergenceIDPrefix namespaces all C4-divergence audit-finding issues so
+// they can be found and reconciled independently of ordinary per-repo
+// conventions (#425).
+const c4DivergenceIDPrefix = "c4-"
+
+// routeC4DivergencesToIssues raises or closes an audit-finding issue (ADR-0004)
+// for each C4 model divergence (ADR-0006 §3), so drift between data sources is
+// tracked exactly like a convention breach: a currently-detected divergence
+// gets an open issue; a divergence that no longer reproduces gets its issue
+// closed.
+//
+// Divergences aren't a fixed enumerable (repo × convention) grid the way
+// ordinary conventions are, so closure can't rely on "the sweep already
+// visited this repo+ID and it passed" — resolution has to be detected by
+// reconciling against every repo a divergence could possibly be attributed to
+// (every system's own repo, for sync divergences, plus lucos_loganne for
+// async/producer divergences) rather than only the repos with a divergence
+// this run.
+//
+// Errors from individual issue operations are logged and skipped — one
+// GitHub API hiccup shouldn't abort the rest of the reconciliation, and this
+// whole step is non-critical to C4 generation/write-back.
+func (s *AuditSweeper) routeC4DivergencesToIssues(token string, systems []configySystem, divergences []c4Divergence) {
+	if s.issueClientFactory == nil {
+		slog.Warn("C4: issueClientFactory not configured, skipping divergence routing")
+		return
+	}
+	issueClient := s.issueClientFactory(token)
+
+	byRepo := make(map[string][]c4Divergence, len(divergences))
+	for _, d := range divergences {
+		byRepo[d.Repo] = append(byRepo[d.Repo], d)
+	}
+
+	// lucos_loganne is a system in its own right, so it's usually already
+	// covered by the systems loop below — the explicit add only matters if
+	// configy somehow lacks it. Dedup via a set either way, so it's never
+	// processed twice.
+	repoSet := make(map[string]bool, len(systems)+1)
+	for _, sys := range systems {
+		repoSet[s.githubOrg+"/"+sys.ID] = true
+	}
+	repoSet[s.githubOrg+"/lucos_loganne"] = true
+
+	candidateRepos := make([]string, 0, len(repoSet))
+	for repo := range repoSet {
+		candidateRepos = append(candidateRepos, repo)
+	}
+
+	for _, repo := range candidateRepos {
+		current := byRepo[repo]
+		currentIDs := make(map[string]bool, len(current))
+		for _, d := range current {
+			currentIDs[d.ID] = true
+			if _, err := issueClient.EnsureIssueExists(repo, ConventionInfo{
+				ID:          d.ID,
+				Description: "C4 model divergence",
+				Detail:      d.Message,
+			}); err != nil {
+				slog.Warn("C4: failed to ensure divergence issue exists", "repo", repo, "id", d.ID, "error", err)
+			}
+		}
+
+		open, err := issueClient.findOpenIssuesByIDPrefix(repo, c4DivergenceIDPrefix)
+		if err != nil {
+			slog.Warn("C4: failed to list open divergence issues for reconciliation", "repo", repo, "error", err)
+			continue
+		}
+		for _, issue := range open {
+			id := conventionIDFromTitle(issue.Title)
+			if currentIDs[id] {
+				continue
+			}
+			if err := issueClient.CloseIssueIfOpen(repo, ConventionInfo{ID: id}); err != nil {
+				slog.Warn("C4: failed to close resolved divergence issue",
+					"repo", repo, "id", id, "issue", issue.Number, "error", err)
+			}
+		}
+	}
 }
