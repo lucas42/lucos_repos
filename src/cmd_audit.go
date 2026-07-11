@@ -75,7 +75,7 @@ func runAuditDryRun() {
 		)
 	}()
 
-	githubAuth, err := NewGitHubAuthClient()
+	githubAuth, err := NewGitHubAuthClient("GITHUB_APP_ID", "GITHUB_APP_PEM")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to initialise GitHub App authentication: %v\n", err)
 		os.Exit(1)

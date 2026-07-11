@@ -448,9 +448,12 @@ func (s *AuditSweeper) putC4GitHubFile(token, repo, path, content, currentSHA, m
 }
 
 // generateAndCommitC4 runs the full C4 model generation pipeline and commits
-// the output artifacts (docs/c4/model.dsl, docs/c4/landscape.md,
-// docs/c4/divergences.md) to the lucos_repos GitHub repository. Files are
-// only committed if their content has changed.
+// the output artifacts (model.dsl, landscape.md, divergences.md) to the
+// dedicated s.c4OutputRepo (lucas42/lucos_architecture_models), authenticated
+// as the scoped lucos-architecture-writer App (see #446 / ADR-0008). Files
+// are only committed if their content has changed. Reading loganne's
+// webhooks-config.json and probing /_info still uses the main estate-read
+// App (s.githubAuth), which stays read-only w.r.t. other repos.
 //
 // The returned error reflects whether the pipeline produced and wrote back a
 // fresh model. It is non-critical to the audit sweep result (the caller does
@@ -594,8 +597,20 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		"unreachable", len(unreachable),
 	)
 
-	// 4. Commit changed artifacts to the lucos_repos repository.
-	outputRepo := s.githubOrg + "/lucos_repos"
+	// 4. Commit changed artifacts to the dedicated output repo, authenticated
+	// as the scoped lucos-architecture-writer App (#446). Its absence (e.g. in
+	// dev, where no writer-App installation exists) is a real failure of this
+	// stage, not a silent no-op — the whole point of #445/#446 is that a
+	// broken write-back must be visible.
+	if s.c4WriteAuth == nil {
+		return errors.New("C4 write-back skipped: lucos-architecture-writer credentials not configured")
+	}
+	writeToken, err := s.c4WriteAuth.GetInstallationToken()
+	if err != nil {
+		slog.Warn("C4: failed to obtain lucos-architecture-writer GitHub token", "error", err)
+		return fmt.Errorf("failed to obtain lucos-architecture-writer GitHub token: %w", err)
+	}
+
 	commitMsg := "Auto-generate C4 estate model from sweep\n\n" +
 		"Regenerated from configy systems, loganne webhooks, loganne /producers, and /_info probes."
 
@@ -603,14 +618,14 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		path    string
 		content string
 	}{
-		{"docs/c4/model.dsl", dsl},
-		{"docs/c4/landscape.md", mermaid},
-		{"docs/c4/divergences.md", divs},
+		{"model.dsl", dsl},
+		{"landscape.md", mermaid},
+		{"divergences.md", divs},
 	}
 
 	var writeErr error
 	for _, artifact := range artifacts {
-		current, err := s.fetchC4GitHubFile(token, outputRepo, artifact.path)
+		current, err := s.fetchC4GitHubFile(writeToken, s.c4OutputRepo, artifact.path)
 		if err != nil {
 			slog.Warn("C4: failed to fetch current file content",
 				"path", artifact.path, "error", err)
@@ -626,7 +641,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		if current != nil {
 			currentSHA = current.SHA
 		}
-		if err := s.putC4GitHubFile(token, outputRepo, artifact.path,
+		if err := s.putC4GitHubFile(writeToken, s.c4OutputRepo, artifact.path,
 			artifact.content, currentSHA, commitMsg); err != nil {
 			slog.Warn("C4: failed to commit artifact", "path", artifact.path, "error", err)
 			writeErr = errors.Join(writeErr,

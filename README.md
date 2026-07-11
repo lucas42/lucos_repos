@@ -8,6 +8,8 @@ Audits all lucos GitHub repositories against a set of coding conventions, raises
 src/            Go source for the HTTP server and audit sweeper
 conventions/    Convention definitions (see below)
 docs/adr/       Architectural Decision Records
+docs/c4/        C4 estate model generation spec — generated output lives in
+                lucas42/lucos_architecture_models, not here (see docs/c4/README.md)
 ```
 
 ### The `src/` package

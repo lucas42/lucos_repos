@@ -11,6 +11,8 @@ services:
       - ENVIRONMENT
       - GITHUB_APP_ID
       - GITHUB_APP_PEM
+      - LUCOS_ARCHITECTURE_WRITER_APP_ID
+      - LUCOS_ARCHITECTURE_WRITER_PEM
       - SCHEDULE_TRACKER_ENDPOINT
     volumes:
       - data:/data

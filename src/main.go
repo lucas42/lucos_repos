@@ -93,10 +93,24 @@ func main() {
 		system = "lucos_repos"
 	}
 
-	githubAuth, err := NewGitHubAuthClient()
+	githubAuth, err := NewGitHubAuthClient("GITHUB_APP_ID", "GITHUB_APP_PEM")
 	if err != nil {
 		slog.Error("Failed to initialise GitHub App authentication", "error", err)
 		os.Exit(2)
+	}
+
+	// The lucos-architecture-writer App is scoped to lucas42/lucos_architecture_models
+	// only, and is only installed in production — there is no dev counterpart
+	// (see #446). Its absence is non-fatal: generateAndCommitC4 reports it as a
+	// c4-model schedule-tracker failure (#445) rather than crashing the whole service.
+	var c4WriteAuth *GitHubAuthClient
+	if os.Getenv("LUCOS_ARCHITECTURE_WRITER_APP_ID") == "" || os.Getenv("LUCOS_ARCHITECTURE_WRITER_PEM") == "" {
+		slog.Warn("LUCOS_ARCHITECTURE_WRITER_APP_ID/LUCOS_ARCHITECTURE_WRITER_PEM not set; C4 write-back to lucos_architecture_models will be skipped")
+	} else {
+		c4WriteAuth, err = NewGitHubAuthClient("LUCOS_ARCHITECTURE_WRITER_APP_ID", "LUCOS_ARCHITECTURE_WRITER_PEM")
+		if err != nil {
+			slog.Error("Failed to initialise lucos-architecture-writer GitHub App authentication; C4 write-back will be skipped", "error", err)
+		}
 	}
 
 	dbPath := "/data/lucos_repos.db"
@@ -117,6 +131,7 @@ func main() {
 
 	sweeper := NewAuditSweeper(db, githubAuth, system)
 	sweeper.scheduleTrackerEndpoint = os.Getenv("SCHEDULE_TRACKER_ENDPOINT")
+	sweeper.c4WriteAuth = c4WriteAuth
 	sweeper.Start()
 
 	prSweeper := NewPRSweeper(githubAuth)

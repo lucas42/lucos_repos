@@ -35,22 +35,25 @@ type GitHubAuthClient struct {
 	tokenExpires time.Time
 }
 
-// NewGitHubAuthClient creates a GitHubAuthClient from GITHUB_APP_ID and GITHUB_APP_PEM
-// environment variables. It discovers the installation ID from the GitHub API.
-func NewGitHubAuthClient() (*GitHubAuthClient, error) {
-	appID := os.Getenv("GITHUB_APP_ID")
+// NewGitHubAuthClient creates a GitHubAuthClient for a GitHub App, reading its
+// numeric App ID and private key from the given environment variable names
+// (e.g. "GITHUB_APP_ID"/"GITHUB_APP_PEM" for the estate-read App, or
+// "LUCOS_ARCHITECTURE_WRITER_APP_ID"/"LUCOS_ARCHITECTURE_WRITER_PEM" for a
+// scoped write App). It discovers the installation ID from the GitHub API.
+func NewGitHubAuthClient(appIDEnvVar, pemEnvVar string) (*GitHubAuthClient, error) {
+	appID := os.Getenv(appIDEnvVar)
 	if appID == "" {
-		return nil, fmt.Errorf("GITHUB_APP_ID environment variable is not set")
+		return nil, fmt.Errorf("%s environment variable is not set", appIDEnvVar)
 	}
 
-	pemRaw := os.Getenv("GITHUB_APP_PEM")
+	pemRaw := os.Getenv(pemEnvVar)
 	if pemRaw == "" {
-		return nil, fmt.Errorf("GITHUB_APP_PEM environment variable is not set")
+		return nil, fmt.Errorf("%s environment variable is not set", pemEnvVar)
 	}
 
 	privateKey, err := parseRSAPrivateKey(pemRaw)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse GITHUB_APP_PEM: %w", err)
+		return nil, fmt.Errorf("failed to parse %s: %w", pemEnvVar, err)
 	}
 
 	client := &GitHubAuthClient{
