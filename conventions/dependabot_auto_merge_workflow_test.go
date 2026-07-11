@@ -13,6 +13,16 @@ func encodeWorkflowContent(content string) string {
 	return `{"content":"` + encoded + `","encoding":"base64"}`
 }
 
+// workflowsDirPath is the GitHub Contents API path for the .github/workflows
+// directory listing on the test repo — the directory-existence gate the
+// convention checks before ever looking at a specific workflow file.
+const workflowsDirPath = "/repos/lucas42/test_repo/contents/.github/workflows"
+
+// workflowsDirExistsJSON is a minimal non-nil directory listing, used by
+// every test below that wants the "has a workflows directory" branch (the
+// convention only cares that entries != nil, not their contents).
+const workflowsDirExistsJSON = `[{"name":"placeholder.yml","type":"file"}]`
+
 const validDependabotAutoMergeYAML = `name: Dependabot auto-merge
 
 on:
@@ -74,6 +84,8 @@ func bothStoresHandler(workflowPath, workflowContent, actionsSecretsJSON, depend
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case workflowsDirPath:
+			w.Write([]byte(workflowsDirExistsJSON))
 		case workflowPath:
 			w.Write([]byte(encodeWorkflowContent(workflowContent)))
 		case "/repos/lucas42/test_repo/actions/secrets":
@@ -226,6 +238,10 @@ func TestDependabotAutoMergeWorkflow_OneActionSecretMissing(t *testing.T) {
 func TestDependabotAutoMergeWorkflow_ActionsSecretsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
 			return
@@ -253,6 +269,10 @@ func TestDependabotAutoMergeWorkflow_ActionsSecretsAPIError(t *testing.T) {
 func TestDependabotAutoMergeWorkflow_DependabotSecretsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(validDependabotAutoMergeYAML)))
 			return
@@ -284,6 +304,10 @@ func TestDependabotAutoMergeWorkflow_DependabotSecretsAPIError(t *testing.T) {
 func TestDependabotAutoMergeWorkflow_PullRequestTarget(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(oldPullRequestTargetYAML)))
 			return
@@ -313,6 +337,10 @@ func TestDependabotAutoMergeWorkflow_PullRequestTarget(t *testing.T) {
 func TestDependabotAutoMergeWorkflow_MissingPermissions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(missingPermissionsYAML)))
 			return
@@ -357,6 +385,10 @@ jobs:
 func TestDependabotAutoMergeWorkflow_SecretsInherit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(secretsInheritYAML)))
 			return
@@ -401,6 +433,10 @@ jobs:
 func TestDependabotAutoMergeWorkflow_MissingSecrets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(missingSecretsYAML)))
 			return
@@ -430,6 +466,10 @@ func TestDependabotAutoMergeWorkflow_MissingSecrets(t *testing.T) {
 func TestDependabotAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		if r.URL.Path == "/repos/lucas42/test_repo/contents/.github/workflows/dependabot-auto-merge.yml" {
 			w.Write([]byte(encodeWorkflowContent(invalidDependabotAutoMergeYAML)))
 			return
@@ -454,9 +494,17 @@ func TestDependabotAutoMergeWorkflow_InlineWorkflow(t *testing.T) {
 	}
 }
 
-// TestDependabotAutoMergeWorkflow_Missing verifies that a missing workflow file fails.
+// TestDependabotAutoMergeWorkflow_Missing verifies that a missing workflow
+// file still fails when the .github/workflows/ directory itself exists (i.e.
+// the repo has CI but no auto-merge workflow) — the directory-existence skip
+// added for #452 must not weaken this.
 func TestDependabotAutoMergeWorkflow_Missing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == workflowsDirPath {
+			w.Write([]byte(workflowsDirExistsJSON))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -491,5 +539,58 @@ func TestDependabotAutoMergeWorkflow_APIError(t *testing.T) {
 	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
 	if result.Err == nil {
 		t.Errorf("expected Err!=nil for API error, got Pass=%v Detail=%q", result.Pass, result.Detail)
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_NoWorkflowsDirectory verifies that a repo
+// with no .github/workflows/ directory at all passes as not-applicable,
+// mirroring reusable-workflow-pinned's graceful skip (#452) — such a repo has
+// nothing for Dependabot to auto-merge, so it shouldn't be told to add a
+// workflow (and provision secrets) it has no CI to run.
+func TestDependabotAutoMergeWorkflow_NoWorkflowsDirectory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No workflows directory, and nothing else either — a minimal repo.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeScript,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if !result.Pass {
+		t.Errorf("expected Pass=true when .github/workflows/ does not exist, got Detail=%q", result.Detail)
+	}
+	if result.Err != nil {
+		t.Errorf("expected Err=nil, got %v", result.Err)
+	}
+	if !strings.Contains(result.Detail, "does not apply") {
+		t.Errorf("expected detail to mention convention does not apply, got Detail=%q", result.Detail)
+	}
+}
+
+// TestDependabotAutoMergeWorkflow_ListWorkflowsDirAPIError verifies that an
+// error listing .github/workflows/ (distinct from a 404) sets Err rather
+// than silently passing or failing.
+func TestDependabotAutoMergeWorkflow_ListWorkflowsDirAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	repo := RepoContext{
+		Name:          "lucas42/test_repo",
+		GitHubToken:   "fake-token",
+		Type:          RepoTypeSystem,
+		GitHubBaseURL: server.URL,
+	}
+
+	result := findConvention(t, "dependabot-auto-merge-workflow").Check(repo)
+	if result.Err == nil {
+		t.Errorf("expected Err!=nil when listing .github/workflows/ fails, got Pass=%v Detail=%q", result.Pass, result.Detail)
 	}
 }

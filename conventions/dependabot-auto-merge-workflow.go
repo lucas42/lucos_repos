@@ -31,6 +31,29 @@ func init() {
 				base = GitHubBaseURL
 			}
 
+			// A repo with no .github/workflows/ directory at all has nothing
+			// for Dependabot to auto-merge — mirror reusable-workflow-pinned's
+			// graceful skip rather than demanding a workflow (and the
+			// LUCOS_CI_APP_ID/LUCOS_CI_PRIVATE_KEY secrets) on a repo with no
+			// CI whatsoever. This is gated on directory presence, not file
+			// presence: a repo that HAS a workflows directory but no
+			// auto-merge file still fails below, unchanged.
+			entries, err := GitHubListDirectoryFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows", repo.Ref)
+			if err != nil {
+				slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "list-workflows", "error", err)
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Err:        fmt.Errorf("error listing .github/workflows: %w", err),
+				}
+			}
+			if entries == nil {
+				return ConventionResult{
+					Convention: "dependabot-auto-merge-workflow",
+					Pass:       true,
+					Detail:     ".github/workflows/ not found; convention does not apply",
+				}
+			}
+
 			// Try the canonical new filename first, then fall back to the legacy name.
 			filenames := []string{
 				".github/workflows/dependabot-auto-merge.yml",
