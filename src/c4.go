@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -451,22 +452,25 @@ func (s *AuditSweeper) putC4GitHubFile(token, repo, path, content, currentSHA, m
 // docs/c4/divergences.md) to the lucos_repos GitHub repository. Files are
 // only committed if their content has changed.
 //
-// This method is intentionally non-critical: all errors are logged and the
-// method returns without signalling failure, so the sweep result is unaffected.
-func (s *AuditSweeper) generateAndCommitC4() {
+// The returned error reflects whether the pipeline produced and wrote back a
+// fresh model. It is non-critical to the audit sweep result (the caller does
+// not fail the sweep on it) but is reported to schedule-tracker under its own
+// "c4-model" job so a broken write-back is surfaced rather than silently
+// leaving the committed model stale (#445).
+func (s *AuditSweeper) generateAndCommitC4() error {
 	slog.Info("C4 model generation starting")
 
 	token, err := s.githubAuth.GetInstallationToken()
 	if err != nil {
 		slog.Warn("C4: failed to obtain GitHub token", "error", err)
-		return
+		return fmt.Errorf("failed to obtain GitHub token: %w", err)
 	}
 
 	// 1. Fetch all systems from configy (including domain field).
 	systems, err := s.fetchConfigySystems()
 	if err != nil {
 		slog.Warn("C4: failed to fetch configy systems", "error", err)
-		return
+		return fmt.Errorf("failed to fetch configy systems: %w", err)
 	}
 
 	// Sort systems by ID for deterministic output.
@@ -487,11 +491,11 @@ func (s *AuditSweeper) generateAndCommitC4() {
 		s.githubOrg+"/lucos_loganne", "src/webhooks-config.json")
 	if err != nil {
 		slog.Warn("C4: failed to fetch loganne webhooks config", "error", err)
-		return
+		return fmt.Errorf("failed to fetch loganne webhooks config: %w", err)
 	}
 	if loganneFile == nil {
 		slog.Warn("C4: loganne webhooks-config.json not found")
-		return
+		return errors.New("loganne webhooks-config.json not found")
 	}
 
 	asyncEdges, asyncDivergences := parseLoganneWebhooks([]byte(loganneFile.Content), domain2sys)
@@ -604,11 +608,14 @@ func (s *AuditSweeper) generateAndCommitC4() {
 		{"docs/c4/divergences.md", divs},
 	}
 
+	var writeErr error
 	for _, artifact := range artifacts {
 		current, err := s.fetchC4GitHubFile(token, outputRepo, artifact.path)
 		if err != nil {
 			slog.Warn("C4: failed to fetch current file content",
 				"path", artifact.path, "error", err)
+			writeErr = errors.Join(writeErr,
+				fmt.Errorf("failed to fetch current content of %s: %w", artifact.path, err))
 			continue
 		}
 		if current != nil && current.Content == artifact.content {
@@ -622,8 +629,11 @@ func (s *AuditSweeper) generateAndCommitC4() {
 		if err := s.putC4GitHubFile(token, outputRepo, artifact.path,
 			artifact.content, currentSHA, commitMsg); err != nil {
 			slog.Warn("C4: failed to commit artifact", "path", artifact.path, "error", err)
+			writeErr = errors.Join(writeErr,
+				fmt.Errorf("failed to write back %s: %w", artifact.path, err))
 		} else {
 			slog.Info("C4: committed artifact", "path", artifact.path)
 		}
 	}
+	return writeErr
 }
