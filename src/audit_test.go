@@ -764,7 +764,7 @@ func TestReportToScheduleTracker_Success(t *testing.T) {
 		sweepInterval:           6 * time.Hour,
 		scheduleTrackerEndpoint: trackerServer.URL + "/v2/report-status",
 	}
-	s.reportToScheduleTracker("success", "")
+	s.reportToScheduleTracker("audit", "success", "")
 
 	if received.System != "lucos_repos" {
 		t.Errorf("expected system %q, got %q", "lucos_repos", received.System)
@@ -806,7 +806,7 @@ func TestReportToScheduleTracker_Error(t *testing.T) {
 		sweepInterval:           6 * time.Hour,
 		scheduleTrackerEndpoint: trackerServer.URL + "/v2/report-status",
 	}
-	s.reportToScheduleTracker("error", "failed to get GitHub token: some auth error")
+	s.reportToScheduleTracker("audit", "error", "failed to get GitHub token: some auth error")
 
 	if received.Status != "error" {
 		t.Errorf("expected status %q, got %q", "error", received.Status)
@@ -829,7 +829,37 @@ func TestReportToScheduleTracker_NoEndpoint(t *testing.T) {
 		// scheduleTrackerEndpoint intentionally left empty
 	}
 	// Should not panic or make any network call.
-	s.reportToScheduleTracker("success", "")
+	s.reportToScheduleTracker("audit", "success", "")
+}
+
+// TestReportToScheduleTracker_DedicatedC4JobName verifies that a distinct
+// jobName (e.g. the C4 write-back's "c4-model" signal) is passed through
+// as-is, so it reports as an independent schedule-tracker job from "audit".
+func TestReportToScheduleTracker_DedicatedC4JobName(t *testing.T) {
+	var received scheduleTrackerPayload
+	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("failed to decode schedule tracker payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer trackerServer.Close()
+
+	s := &AuditSweeper{
+		system:                  "lucos_repos",
+		sweepInterval:           6 * time.Hour,
+		scheduleTrackerEndpoint: trackerServer.URL + "/v2/report-status",
+	}
+	s.reportToScheduleTracker("c4-model", "error", "failed to write back docs/c4/model.dsl: some error")
+
+	if received.JobName != "c4-model" {
+		t.Errorf("expected job_name %q, got %q", "c4-model", received.JobName)
+	}
+	if received.Status != "error" {
+		t.Errorf("expected status %q, got %q", "error", received.Status)
+	}
 }
 
 // TestSweep_IssueAPIErrorReturnsError verifies that when EnsureIssueExists

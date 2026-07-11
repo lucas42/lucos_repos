@@ -646,7 +646,10 @@ func TestGenerateAndCommitC4_EarlyExitOnLoganneNotFound(t *testing.T) {
 		configyBaseURL:   configyServer.URL,
 		githubAPIBaseURL: githubServer.URL,
 	}
-	s.generateAndCommitC4() // must not panic or error
+	err := s.generateAndCommitC4() // must not panic
+	if err == nil {
+		t.Error("expected an error when loganne webhooks-config.json is not found")
+	}
 
 	if putCalled {
 		t.Error("expected no PUT requests when loganne webhooks not found, but one was made")
@@ -728,9 +731,65 @@ func TestGenerateAndCommitC4_SkipsUnchangedFiles(t *testing.T) {
 		configyBaseURL:   configyServer.URL,
 		githubAPIBaseURL: githubServer.URL,
 	}
-	s.generateAndCommitC4()
+	if err := s.generateAndCommitC4(); err != nil {
+		t.Errorf("expected nil error when all artifacts are unchanged, got %v", err)
+	}
 
 	if putCalled {
 		t.Error("expected no PUT requests when all file contents are unchanged")
+	}
+}
+
+// TestGenerateAndCommitC4_ReturnsErrorOnPutFailure verifies that a failed
+// GitHub Contents PUT (the write-back step) is surfaced as a returned error,
+// so the caller can report it to schedule-tracker as a fail (#445) rather
+// than only logging it.
+func TestGenerateAndCommitC4_ReturnsErrorOnPutFailure(t *testing.T) {
+	loganneConfig := `{"consumerTokens": {}}`
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/systems" {
+			json.NewEncoder(w).Encode([]configySystem{
+				{ID: "lucos_test"},
+			})
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			// Simulate the write-back failing, e.g. a permissions or conflict error.
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"message": "Resource not accessible by integration"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_loganne/contents/src/webhooks-config.json":
+			json.NewEncoder(w).Encode(map[string]string{
+				"sha":      "loganne-sha",
+				"content":  base64.StdEncoding.EncodeToString([]byte(loganneConfig)),
+				"encoding": "base64",
+			})
+		default:
+			// No existing artifact content — every artifact is new and gets PUT.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	s := &AuditSweeper{
+		githubAuth:       &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)},
+		githubOrg:        "lucas42",
+		configyBaseURL:   configyServer.URL,
+		githubAPIBaseURL: githubServer.URL,
+	}
+
+	err := s.generateAndCommitC4()
+	if err == nil {
+		t.Fatal("expected an error when the artifact write-back PUT fails")
 	}
 }

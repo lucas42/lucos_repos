@@ -189,7 +189,7 @@ func (s *AuditSweeper) runSweep() {
 		s.lastSweepErr = err
 		s.sweepInProgress = false
 		s.mu.Unlock()
-		s.reportToScheduleTracker("error", err.Error())
+		s.reportToScheduleTracker("audit", "error", err.Error())
 		return
 	}
 	slog.Info("Audit sweep completed successfully", "duration", time.Since(start))
@@ -198,19 +198,21 @@ func (s *AuditSweeper) runSweep() {
 	s.lastSweepErr = nil
 	s.sweepInProgress = false
 	s.mu.Unlock()
-	s.reportToScheduleTracker("success", "")
+	s.reportToScheduleTracker("audit", "success", "")
 }
 
-// reportToScheduleTracker posts the sweep outcome to the schedule tracker
-// endpoint if one is configured. Errors are logged but do not affect the sweep
-// result.
-func (s *AuditSweeper) reportToScheduleTracker(status, message string) {
+// reportToScheduleTracker posts a job outcome to the schedule tracker endpoint
+// if one is configured. jobName distinguishes independent signals (e.g.
+// "audit" for the main sweep, "c4-model" for C4 write-back) so one job's
+// failure doesn't hide behind another's success. Errors are logged but do not
+// affect the caller's result.
+func (s *AuditSweeper) reportToScheduleTracker(jobName, status, message string) {
 	if s.scheduleTrackerEndpoint == "" {
 		return
 	}
 	payload := scheduleTrackerPayload{
 		System:    s.system,
-		JobName:   "audit",
+		JobName:   jobName,
 		Frequency: int(s.sweepInterval.Seconds()),
 		Status:    status,
 		Message:   message,
@@ -423,9 +425,15 @@ func (s *AuditSweeper) sweep() error {
 		slog.Warn("Failed to clean up stale findings", "error", err)
 	}
 
-	// Generate and commit the C4 estate model. Non-critical — failures are
-	// logged but do not affect the sweep result or the schedule-tracker report.
-	s.generateAndCommitC4()
+	// Generate and commit the C4 estate model. Non-critical to the audit sweep
+	// result — but reported to schedule-tracker under its own "c4-model" job
+	// so a broken write-back is surfaced instead of going unnoticed (#445).
+	if err := s.generateAndCommitC4(); err != nil {
+		slog.Warn("C4 model generation/write-back failed", "error", err)
+		s.reportToScheduleTracker("c4-model", "error", err.Error())
+	} else {
+		s.reportToScheduleTracker("c4-model", "success", "")
+	}
 
 	return nil
 }
