@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -126,42 +125,15 @@ func (rl *auditRateLimiter) allow(repo string) bool {
 	return true
 }
 
-// fetchConfigyRepoInfo fetches system metadata from configy for a specific repo.
-// Returns hosts and unsupervisedAgentCode if the repo is a known system; nil hosts otherwise.
-func fetchConfigyRepoInfo(configyBase, repoName string) (hosts []string, unsupervisedAgentCode bool, err error) {
-	url := configyBase + "/systems"
-	resp, err := http.Get(url) //nolint:gosec // URL comes from trusted config
-	if err != nil {
-		return nil, false, fmt.Errorf("configy systems request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("configy /systems returned %d", resp.StatusCode)
-	}
-
-	var systems []configySystem
-	if err := json.NewDecoder(resp.Body).Decode(&systems); err != nil {
-		return nil, false, fmt.Errorf("failed to decode configy systems: %w", err)
-	}
-
-	// Extract the short repo name (e.g. "lucos_photos" from "lucas42/lucos_photos").
-	parts := strings.SplitN(repoName, "/", 2)
-	shortName := repoName
-	if len(parts) == 2 {
-		shortName = parts[1]
-	}
-
-	for _, sys := range systems {
-		if sys.ID == shortName {
-			return sys.Hosts, sys.UnsupervisedAgentCode, nil
-		}
-	}
-	return nil, false, nil
-}
-
 // newAuditHandler returns the POST /api/audit/{repo}?ref={ref} handler.
-func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string, oidcValidator *GitHubOIDCValidator) http.HandlerFunc {
+//
+// RepoContext.Type is refreshed from a live configy fetch rather than the
+// baseline's DB-cached value (#453), for the same reason as /api/rerun: Type
+// gates which conventions even apply, so a stale Type can silently skip or
+// wrongly include conventions for a repo whose configy registration changed
+// since the last sweep. A live-fetch failure falls back to the DB-cached
+// baseline.Type (degraded, not broken) and logs a warning.
+func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase, configyBase string, oidcValidator *GitHubOIDCValidator) http.HandlerFunc {
 	limiter := newAuditRateLimiter(10, time.Minute)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -215,18 +187,30 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string,
 			return
 		}
 
-		// Fetch configy metadata (hosts, unsupervisedAgentCode) for the repo.
-		hosts, unsupervisedAgentCode, configyErr := fetchConfigyRepoInfo(configyBaseURL, repoName)
-		if configyErr != nil {
-			slog.Warn("Failed to fetch configy data for audit, proceeding without hosts",
-				"repo", repoName, "error", configyErr)
+		// Resolve this repo's live Type/hosts/unsupervisedAgentCode. A repo
+		// missing from a successfully-fetched live map has been removed from
+		// configy since the last sweep — reclassify as unconfigured, matching
+		// what a full sweep would compute right now.
+		repoType := baseline.Type
+		var hosts []string
+		var unsupervisedAgentCode bool
+		liveTypes, typeErr := fetchRepoTypesFrom(configyBase, defaultGitHubOrg)
+		if typeErr != nil {
+			slog.Warn("Failed to fetch live repo types from configy for audit; falling back to last-sweep cached Type",
+				"repo", repoName, "error", typeErr)
+		} else if info, ok := liveTypes[repoName]; ok {
+			repoType = info.Type
+			hosts = info.Hosts
+			unsupervisedAgentCode = info.UnsupervisedAgentCode
+		} else {
+			repoType = conventions.RepoTypeUnconfigured
 		}
 
 		// Run all applicable conventions against the ref.
 		ctx := conventions.RepoContext{
 			Name:                  repoName,
 			GitHubToken:           ghToken,
-			Type:                  baseline.Type,
+			Type:                  repoType,
 			Hosts:                 hosts,
 			GitHubBaseURL:         githubAPIBase,
 			Ref:                   ref,
@@ -239,7 +223,7 @@ func newAuditHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase string,
 		var baselineFailures []string
 
 		for _, conv := range allConventions {
-			if !conv.AppliesToType(baseline.Type) {
+			if !conv.AppliesToType(repoType) {
 				continue
 			}
 			if !conv.AppliesToRepo(repoName) {

@@ -287,3 +287,111 @@ func TestRerunHandler_RepoOnly(t *testing.T) {
 		t.Error("expected at least one check in result")
 	}
 }
+
+// TestRerunHandler_UsesLiveTypeNotCachedType verifies that RepoContext.Type
+// (and the AppliesToType gate) comes from a fresh configy fetch, not the
+// DB-cached value from the last full sweep (#453). The repo is cached as
+// "component" but configy now reports it as a system — the rerun should pick
+// up "system": the response's RepoType reflects it, and a system-only
+// convention (container-naming) becomes selectable.
+func TestRerunHandler_UsesLiveTypeNotCachedType(t *testing.T) {
+	db := openTestDB(t)
+	// Cached (stale) Type from the last sweep says "component".
+	db.UpsertRepo("lucas42/test_repo", "component", false)
+	// A repo only appears in GetStatusReport().Repos once it has at least one
+	// finding — seed an unrelated one so the repo/convention filters resolve.
+	db.UpsertConvention("in-lucos-configy", "In lucos configy")
+	db.SaveFinding(conventions.ConventionResult{Convention: "in-lucos-configy", Pass: true, Detail: "ok"}, "lucas42/test_repo", "")
+
+	ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// docker-compose.yml (and everything else) 404s — container-naming
+		// treats a missing compose file as a pass, which is enough to prove
+		// it was selected at all.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ghServer.Close()
+
+	// Live configy now classifies test_repo as a system.
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/systems":
+			json.NewEncoder(w).Encode([]configySystem{{ID: "test_repo", Hosts: []string{"avalon"}}})
+		default:
+			json.NewEncoder(w).Encode([]struct{}{})
+		}
+	}))
+	defer configyServer.Close()
+
+	handler := newRerunHandler(db, fakeGitHubAuth(t), ghServer.URL, configyServer.URL)
+
+	req := httptest.NewRequest("POST", "/api/rerun?repo=lucas42/test_repo&convention=container-naming", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var results []rerunRepoResult
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (container-naming applies once Type=system is picked up live), got %d", len(results))
+	}
+	if results[0].RepoType != "system" {
+		t.Errorf("expected live-refreshed RepoType %q, got %q (cached DB value was 'component')", "system", results[0].RepoType)
+	}
+	if _, ok := results[0].Checks["container-naming"]; !ok {
+		t.Error("expected container-naming (system-only convention) to be selected using the live Type")
+	}
+}
+
+// TestRerunHandler_FallsBackToCachedTypeOnConfigyError verifies that when the
+// live configy fetch fails entirely, the rerun degrades to the DB-cached
+// Type rather than failing the whole request (#453).
+func TestRerunHandler_FallsBackToCachedTypeOnConfigyError(t *testing.T) {
+	db := openTestDB(t)
+	db.UpsertRepo("lucas42/test_repo", "system", false)
+	db.UpsertConvention("allow-auto-merge", "Allow auto-merge")
+	db.SaveFinding(conventions.ConventionResult{Convention: "allow-auto-merge", Pass: true, Detail: "ok"}, "lucas42/test_repo", "")
+
+	ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/graphql" {
+			w.Write([]byte(`{"data":{"repository":{"autoMergeAllowed":true}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ghServer.Close()
+
+	// configy /systems returns a server error (not just 404-not-found —
+	// genuinely unreachable/broken), so fetchRepoTypesFrom fails outright.
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer configyServer.Close()
+
+	handler := newRerunHandler(db, fakeGitHubAuth(t), ghServer.URL, configyServer.URL)
+
+	req := httptest.NewRequest("POST", "/api/rerun?repo=lucas42/test_repo&convention=allow-auto-merge", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (degraded, not failed) even when configy is unreachable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var results []rerunRepoResult
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].RepoType != "system" {
+		t.Errorf("expected fallback to cached RepoType %q, got %q", "system", results[0].RepoType)
+	}
+}

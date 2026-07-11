@@ -238,7 +238,7 @@ func main() {
 	mux.HandleFunc("POST /api/sweep", newSweepHandler(sweeper))
 	mux.HandleFunc("POST /api/pr-sweep", newPRSweepHandler(prSweeper))
 	oidcValidator := NewGitHubOIDCValidator("lucas42")
-	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, oidcValidator))
+	mux.HandleFunc("POST /api/audit/", newAuditHandler(db, githubAuth, githubAPIBaseURL, configyBaseURL, oidcValidator))
 
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		report, err := db.GetStatusReport()

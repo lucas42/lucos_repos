@@ -20,9 +20,15 @@ type rerunRepoResult struct {
 //
 // It accepts ?repo and/or ?convention query parameters (at least one is
 // required) and immediately re-runs the matching convention checks against
-// the live repository state. Results are saved to the database so the
-// dashboard reflects the new state without waiting for the next scheduled
-// sweep.
+// the live repository state — including RepoContext.Type, refreshed from a
+// fresh configy fetch rather than the last full sweep's DB-cached value
+// (#453), since a repo's configy registration can change between sweeps and
+// Type also gates which conventions apply at all. If the live configy fetch
+// fails, this falls back to the DB-cached Type (degraded, not broken) and
+// logs a warning. A repo no longer found in configy is reclassified as
+// RepoTypeUnconfigured, matching what a full sweep would compute right now.
+// Results are saved to the database so the dashboard reflects the new state
+// without waiting for the next scheduled sweep.
 //
 // No auth is required — this is an internal operational tool on the trusted
 // l42.eu network. The re-run does not interfere with the scheduled sweep:
@@ -83,25 +89,43 @@ func newRerunHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase, config
 			return
 		}
 
+		// Fetch a fresh repo-type/hosts map once upfront, rather than the
+		// per-repo hosts-only fetch this replaces — 3 configy calls total for
+		// any number of repos, and it's the only way to get a correct Type
+		// (see fetchRepoTypesFrom). A failure here degrades to the DB-cached
+		// Type per repo below rather than failing the whole rerun.
+		liveTypes, typeErr := fetchRepoTypesFrom(configyBase, defaultGitHubOrg)
+		if typeErr != nil {
+			slog.Warn("Failed to fetch live repo types from configy for rerun; falling back to last-sweep cached Type", "error", typeErr)
+		}
+
 		allConventions := conventions.All()
 		var results []rerunRepoResult
 
 		for _, repoName := range repoNames {
 			rs := report.Repos[repoName]
 
-			// Fetch configy metadata (hosts, unsupervisedAgentCode) for this repo.
-			// Errors are non-fatal — the check still runs, but host-dependent
-			// conventions (e.g. circleci-system-deploy-jobs) may give incomplete results.
-			hosts, unsupervisedAgentCode, configyErr := fetchConfigyRepoInfo(configyBase, repoName)
-			if configyErr != nil {
-				slog.Warn("Failed to fetch configy data for rerun, proceeding without hosts",
-					"repo", repoName, "error", configyErr)
+			// Resolve this repo's live Type/hosts/unsupervisedAgentCode. A repo
+			// missing from a successfully-fetched live map has been removed
+			// from configy since the last sweep — reclassify as unconfigured,
+			// matching what a full sweep would compute right now.
+			repoType := rs.Type
+			var hosts []string
+			var unsupervisedAgentCode bool
+			if typeErr == nil {
+				if info, ok := liveTypes[repoName]; ok {
+					repoType = info.Type
+					hosts = info.Hosts
+					unsupervisedAgentCode = info.UnsupervisedAgentCode
+				} else {
+					repoType = conventions.RepoTypeUnconfigured
+				}
 			}
 
 			ctx := conventions.RepoContext{
 				Name:                  repoName,
 				GitHubToken:           token,
-				Type:                  rs.Type,
+				Type:                  repoType,
 				Hosts:                 hosts,
 				GitHubBaseURL:         githubAPIBase,
 				UnsupervisedAgentCode: unsupervisedAgentCode,
@@ -114,7 +138,7 @@ func newRerunHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase, config
 				if conventionFilter != "" && conv.ID != conventionFilter {
 					continue
 				}
-				if !conv.AppliesToType(rs.Type) {
+				if !conv.AppliesToType(repoType) {
 					continue
 				}
 				if !conv.AppliesToRepo(repoName) {
@@ -165,7 +189,7 @@ func newRerunHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase, config
 
 			results = append(results, rerunRepoResult{
 				Repo:     repoName,
-				RepoType: string(rs.Type),
+				RepoType: string(repoType),
 				Checks:   checks,
 			})
 		}
