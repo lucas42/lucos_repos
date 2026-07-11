@@ -701,19 +701,19 @@ func TestGenerateAndCommitC4_SkipsUnchangedFiles(t *testing.T) {
 				"content":  base64.StdEncoding.EncodeToString([]byte(loganneConfig)),
 				"encoding": "base64",
 			})
-		case "/repos/lucas42/lucos_repos/contents/docs/c4/model.dsl":
+		case "/repos/lucas42/lucos_architecture_models/contents/model.dsl":
 			json.NewEncoder(w).Encode(map[string]string{
 				"sha":      "dsl-sha",
 				"content":  base64.StdEncoding.EncodeToString([]byte(expectedDSL)),
 				"encoding": "base64",
 			})
-		case "/repos/lucas42/lucos_repos/contents/docs/c4/landscape.md":
+		case "/repos/lucas42/lucos_architecture_models/contents/landscape.md":
 			json.NewEncoder(w).Encode(map[string]string{
 				"sha":      "mermaid-sha",
 				"content":  base64.StdEncoding.EncodeToString([]byte(expectedMermaid)),
 				"encoding": "base64",
 			})
-		case "/repos/lucas42/lucos_repos/contents/docs/c4/divergences.md":
+		case "/repos/lucas42/lucos_architecture_models/contents/divergences.md":
 			json.NewEncoder(w).Encode(map[string]string{
 				"sha":      "divs-sha",
 				"content":  base64.StdEncoding.EncodeToString([]byte(expectedDivs)),
@@ -727,6 +727,8 @@ func TestGenerateAndCommitC4_SkipsUnchangedFiles(t *testing.T) {
 
 	s := &AuditSweeper{
 		githubAuth:       &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)},
+		c4WriteAuth:      &GitHubAuthClient{cachedToken: "fake-write-token", tokenExpires: time.Now().Add(1 * time.Hour)},
+		c4OutputRepo:     "lucas42/lucos_architecture_models",
 		githubOrg:        "lucas42",
 		configyBaseURL:   configyServer.URL,
 		githubAPIBaseURL: githubServer.URL,
@@ -737,6 +739,54 @@ func TestGenerateAndCommitC4_SkipsUnchangedFiles(t *testing.T) {
 
 	if putCalled {
 		t.Error("expected no PUT requests when all file contents are unchanged")
+	}
+}
+
+// TestGenerateAndCommitC4_NoWriteAuthConfigured verifies that a nil
+// c4WriteAuth (the dev-environment state, since the lucos-architecture-writer
+// App is only installed in production — #446) is treated as a real failure
+// of the write-back stage, not a silent skip.
+func TestGenerateAndCommitC4_NoWriteAuthConfigured(t *testing.T) {
+	loganneConfig := `{"consumerTokens": {}}`
+
+	configyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/systems" {
+			json.NewEncoder(w).Encode([]configySystem{
+				{ID: "lucos_test"},
+			})
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer configyServer.Close()
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/lucas42/lucos_loganne/contents/src/webhooks-config.json":
+			json.NewEncoder(w).Encode(map[string]string{
+				"sha":      "loganne-sha",
+				"content":  base64.StdEncoding.EncodeToString([]byte(loganneConfig)),
+				"encoding": "base64",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer githubServer.Close()
+
+	s := &AuditSweeper{
+		githubAuth:       &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)},
+		c4WriteAuth:      nil, // not configured, as in dev
+		c4OutputRepo:     "lucas42/lucos_architecture_models",
+		githubOrg:        "lucas42",
+		configyBaseURL:   configyServer.URL,
+		githubAPIBaseURL: githubServer.URL,
+	}
+	err := s.generateAndCommitC4()
+	if err == nil {
+		t.Error("expected an error when c4WriteAuth is not configured")
 	}
 }
 
@@ -783,6 +833,8 @@ func TestGenerateAndCommitC4_ReturnsErrorOnPutFailure(t *testing.T) {
 
 	s := &AuditSweeper{
 		githubAuth:       &GitHubAuthClient{cachedToken: "fake-token", tokenExpires: time.Now().Add(1 * time.Hour)},
+		c4WriteAuth:      &GitHubAuthClient{cachedToken: "fake-write-token", tokenExpires: time.Now().Add(1 * time.Hour)},
+		c4OutputRepo:     "lucas42/lucos_architecture_models",
 		githubOrg:        "lucas42",
 		configyBaseURL:   configyServer.URL,
 		githubAPIBaseURL: githubServer.URL,

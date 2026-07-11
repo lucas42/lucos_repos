@@ -102,6 +102,16 @@ type AuditSweeper struct {
 	sweepInterval time.Duration
 	system        string
 
+	// c4WriteAuth authenticates the C4 artifact write-back as the scoped
+	// lucos-architecture-writer App (installed only on c4OutputRepo, in
+	// production — see #446). nil when the writer App's credentials aren't
+	// configured (e.g. in dev), in which case generateAndCommitC4 fails
+	// loudly rather than silently skipping.
+	c4WriteAuth *GitHubAuthClient
+	// c4OutputRepo is the "{owner}/{repo}" the C4 artifacts are committed to.
+	// Overridable in tests.
+	c4OutputRepo string
+
 	// Base URLs — overridable in tests.
 	configyBaseURL          string
 	githubAPIBaseURL        string
@@ -134,6 +144,7 @@ func NewAuditSweeper(db *DB, githubAuth *GitHubAuthClient, system string) *Audit
 		githubOrg:                    "lucas42",
 		sweepInterval:                6 * time.Hour,
 		system:                       system,
+		c4OutputRepo:                 "lucas42/lucos_architecture_models",
 		configyBaseURL:               configyBaseURL,
 		githubAPIBaseURL:             githubAPIBaseURL,
 		contentFetchThrottleInterval: contentFetchThrottleInterval,
