@@ -145,6 +145,41 @@ func (c *GitHubIssueClient) findOpenIssueObject(repo, conventionID string) (*git
 	return nil, nil
 }
 
+// findOpenIssuesByIDPrefix fetches all open audit-finding issues on the given
+// repo whose convention ID (per conventionIssuePrefix's format) starts with
+// idPrefix. Unlike findOpenIssueObject (which returns the single match for one
+// exact convention ID), this returns every match under a broader namespace —
+// used to reconcile a dynamic, non-enumerable set of findings (e.g. C4
+// divergences, #425) where a single sweep may need to close several distinct
+// issues that no longer reproduce.
+func (c *GitHubIssueClient) findOpenIssuesByIDPrefix(repo, idPrefix string) ([]gitHubIssue, error) {
+	listURL := fmt.Sprintf("%s/repos/%s/issues?labels=%s&state=open&per_page=100", c.baseURL, repo, auditFindingLabel)
+
+	issues, err := c.fetchIssuesList(listURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list open issues: %w", err)
+	}
+
+	titlePrefix := "[Convention] " + idPrefix
+	var matched []gitHubIssue
+	for _, issue := range issues {
+		if strings.HasPrefix(issue.Title, titlePrefix) {
+			matched = append(matched, issue)
+		}
+	}
+	return matched, nil
+}
+
+// conventionIDFromTitle extracts the convention ID from an issue title in the
+// "[Convention] <id>: <description>" format produced by conventionIssueTitle.
+// The convention ID is documented as immutable and never contains ":", so
+// splitting on the first colon is safe.
+func conventionIDFromTitle(title string) string {
+	rest := strings.TrimPrefix(title, "[Convention] ")
+	id, _, _ := strings.Cut(rest, ":")
+	return id
+}
+
 // findMostRecentClosedIssue fetches the most recently updated closed audit-finding
 // issues on the given repo and returns the HTML URL of the first one whose title
 // matches exactly, or "" if none.
