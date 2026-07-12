@@ -157,6 +157,67 @@ func TestRateLimitTransport_RateLimitExceedsMaxWait_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestRateLimitTransport_CustomMaxWait_WaitsLongerThanDefault(t *testing.T) {
+	// Reset is beyond the default rateLimitMaxWait (5m) but within a custom,
+	// longer MaxWait — this is the dry-run CI path waiting out a primary
+	// quota reset (lucas42/lucos_repos#462).
+	resetAt := time.Now().Add(rateLimitMaxWait + 10*time.Minute)
+	rateLimitHeaders := http.Header{}
+	rateLimitHeaders.Set("X-RateLimit-Reset", strconv.FormatInt(resetAt.Unix(), 10))
+	mock := &mockRoundTripper{
+		responses: []*http.Response{
+			makeResp(http.StatusForbidden, `{"message":"API rate limit exceeded"}`, rateLimitHeaders),
+			makeResp(http.StatusOK, `{"ok":true}`, nil),
+		},
+	}
+
+	origSleep := rateLimitSleep
+	defer func() { rateLimitSleep = origSleep }()
+	var sleptFor time.Duration
+	rateLimitSleep = func(d time.Duration) { sleptFor = d }
+
+	transport := NewRateLimitTransport(mock)
+	transport.MaxWait = rateLimitMaxWait + 30*time.Minute
+	req, _ := http.NewRequest("GET", "http://example.com/test", nil)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("unexpected error with extended MaxWait: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 after retry, got %d", resp.StatusCode)
+	}
+	if mock.calls != 2 {
+		t.Errorf("expected 2 calls (rate limit + retry), got %d", mock.calls)
+	}
+	if sleptFor <= 0 {
+		t.Error("expected sleep to be called with a positive duration")
+	}
+}
+
+func TestRateLimitTransport_ZeroValueMaxWait_FallsBackToDefault(t *testing.T) {
+	// A RateLimitTransport constructed as a bare struct literal (MaxWait left
+	// at its zero value) must behave exactly like the pre-field default.
+	resetAt := time.Now().Add(rateLimitMaxWait + 10*time.Minute)
+	rateLimitHeaders := http.Header{}
+	rateLimitHeaders.Set("X-RateLimit-Reset", strconv.FormatInt(resetAt.Unix(), 10))
+	mock := &mockRoundTripper{
+		responses: []*http.Response{
+			makeResp(http.StatusForbidden, `{"message":"API rate limit exceeded"}`, rateLimitHeaders),
+		},
+	}
+
+	origSleep := rateLimitSleep
+	defer func() { rateLimitSleep = origSleep }()
+	rateLimitSleep = func(d time.Duration) { t.Error("sleep should not be called when wait exceeds default max") }
+
+	transport := &RateLimitTransport{Wrapped: mock}
+	req, _ := http.NewRequest("GET", "http://example.com/test", nil)
+	_, err := transport.RoundTrip(req)
+	if err == nil {
+		t.Fatal("expected error when wait exceeds the default max, got nil")
+	}
+}
+
 func TestRateLimitTransport_RateLimitNoResetHeader_ReturnsError(t *testing.T) {
 	// Rate limit 403 but no X-RateLimit-Reset header.
 	mock := &mockRoundTripper{
