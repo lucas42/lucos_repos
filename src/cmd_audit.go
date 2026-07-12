@@ -6,9 +6,40 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"lucos_repos/conventions"
 )
+
+// auditDryRunMaxWaitDefault is how long the dry-run's RateLimitTransport will
+// wait for a primary (points-based) GitHub rate-limit reset before giving up.
+// It's much longer than the production 5-min ceiling (conventions' own
+// default) because unlike a live request-serving path, this CI job can afford
+// to block for the ~20-25 min a primary-quota reset typically takes — the
+// alternative is a red dry-run check that self-heals at the top of the next
+// hour anyway (lucas42/lucos_repos#462).
+const auditDryRunMaxWaitDefault = 30 * time.Minute
+
+// auditDryRunMaxWaitEnvVar overrides auditDryRunMaxWaitDefault when set, as a
+// Go duration string (e.g. "45m").
+const auditDryRunMaxWaitEnvVar = "AUDIT_DRYRUN_MAX_WAIT"
+
+// auditDryRunMaxWait returns the configured max-wait for the dry-run's
+// RateLimitTransport, falling back to auditDryRunMaxWaitDefault if
+// AUDIT_DRYRUN_MAX_WAIT is unset or unparseable.
+func auditDryRunMaxWait() time.Duration {
+	v := os.Getenv(auditDryRunMaxWaitEnvVar)
+	if v == "" {
+		return auditDryRunMaxWaitDefault
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		slog.Warn("invalid AUDIT_DRYRUN_MAX_WAIT value; using default",
+			"value", v, "default", auditDryRunMaxWaitDefault)
+		return auditDryRunMaxWaitDefault
+	}
+	return d
+}
 
 // DryRunReport is the output of a dry-run audit sweep. It matches the structure
 // of StatusReport from the /api/status endpoint so the diff is straightforward.
@@ -61,8 +92,18 @@ func runAuditDryRun() {
 	// no retry or pacing at all, which is why the audit-dry-run CI check
 	// intermittently failed with a mass of unretried 403s
 	// (lucas42/lucos_repos#433).
+	//
+	// dryRunMaxWait is set much longer than RateLimitTransport's 5m default:
+	// on a busy estate-rollout hour, several sweeps (this dry-run, other open
+	// PRs' dry-runs, the production sweep) can exhaust the *shared* primary
+	// hourly quota, whose reset is typically 20-25 min away — well beyond the
+	// 5m ceiling that's appropriate for a live request-serving path. Waiting
+	// it out here lets this CI job finish with a full diff instead of going
+	// red (lucas42/lucos_repos#462).
+	dryRunMaxWait := auditDryRunMaxWait()
 	throttleTransport := conventions.NewThrottleTransport(http.DefaultTransport, contentFetchThrottleInterval)
 	rateLimitTransport := conventions.NewRateLimitTransport(throttleTransport)
+	rateLimitTransport.MaxWait = dryRunMaxWait
 	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
 	conventions.SetHTTPClient(cachingClient)
@@ -193,6 +234,7 @@ func runAuditDryRun() {
 		// (lucas42/lucos_repos#433).
 		retryThrottle := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
 		retryRateLimit := conventions.NewRateLimitTransport(retryThrottle)
+		retryRateLimit.MaxWait = dryRunMaxWait
 		conventions.SetHTTPClient(&http.Client{Transport: retryRateLimit})
 
 		for _, pc := range pendingRetries {

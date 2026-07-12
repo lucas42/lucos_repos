@@ -37,15 +37,23 @@ type rateLimitBodyMessage struct {
 type RateLimitTransport struct {
 	// Wrapped is the underlying transport for actual network requests.
 	Wrapped http.RoundTripper
+	// MaxWait is the maximum duration to sleep waiting for a rate-limit reset
+	// before giving up and returning an error. Zero falls back to
+	// rateLimitMaxWait (5m) — callers that only need the previous fixed
+	// behaviour (e.g. production request paths) don't need to set this.
+	MaxWait time.Duration
 }
 
 // NewRateLimitTransport creates a RateLimitTransport wrapping the given transport.
-// If wrapped is nil, http.DefaultTransport is used.
+// If wrapped is nil, http.DefaultTransport is used. MaxWait defaults to
+// rateLimitMaxWait (5m); set it on the returned transport directly to allow a
+// longer wait (e.g. the dry-run CLI path waiting out a primary-quota reset —
+// see lucas42/lucos_repos#462).
 func NewRateLimitTransport(wrapped http.RoundTripper) *RateLimitTransport {
 	if wrapped == nil {
 		wrapped = http.DefaultTransport
 	}
-	return &RateLimitTransport{Wrapped: wrapped}
+	return &RateLimitTransport{Wrapped: wrapped, MaxWait: rateLimitMaxWait}
 }
 
 // RoundTrip implements http.RoundTripper. On a 403 response, it inspects the
@@ -94,9 +102,14 @@ func (t *RateLimitTransport) RoundTrip(req *http.Request) (*http.Response, error
 			rateLimitDiagnostic(resp, body))
 	}
 
-	if wait > rateLimitMaxWait {
+	maxWait := t.MaxWait
+	if maxWait <= 0 {
+		maxWait = rateLimitMaxWait
+	}
+
+	if wait > maxWait {
 		return nil, fmt.Errorf("GitHub rate limit exceeded; wait %s exceeds %s max wait: %s",
-			wait.Round(time.Second), rateLimitMaxWait, rateLimitDiagnostic(resp, body))
+			wait.Round(time.Second), maxWait, rateLimitDiagnostic(resp, body))
 	}
 
 	if wait > 0 {
