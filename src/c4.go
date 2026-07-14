@@ -111,6 +111,9 @@ func generateC4DSL(m c4Model) string {
 	}
 	b.WriteString("\n")
 	b.WriteString("        # async event producers (→ loganne)\n")
+	// Only drawn for real systems (a declared softwareSystem element exists to draw
+	// the arrow from) — component/script producers pass validation (#467) but have
+	// no C4 element, so they're valid yet not rendered pending a diagram decision.
 	for _, edge := range m.producerEdges {
 		if m.sysSet[edge.Source] {
 			fmt.Fprintf(&b, "        %s -> lucos_loganne \"emits %s\"\n",
@@ -148,6 +151,7 @@ func generateC4Mermaid(m c4Model) string {
 		connected[edge.Consumer] = true
 		connected["lucos_loganne"] = true
 	}
+	// Same real-systems-only restriction as generateC4DSL (see comment there).
 	for _, edge := range m.producerEdges {
 		if m.sysSet[edge.Source] {
 			connected[edge.Source] = true
@@ -176,6 +180,7 @@ func generateC4Mermaid(m c4Model) string {
 		}
 	}
 	b.WriteString("  %% async producers (dotted, → loganne)\n")
+	// Same real-systems-only restriction as generateC4DSL (see comment there).
 	for _, edge := range m.producerEdges {
 		if m.sysSet[edge.Source] {
 			fmt.Fprintf(&b, "  %s -.%s.-> lucos_loganne\n", dslIdent(edge.Source), edge.Event)
@@ -285,19 +290,22 @@ func probeLoganneProducers(domain string, client *http.Client) (map[string][]str
 }
 
 // parseLoganneProducers converts the raw /producers map into sorted producer
-// edges, recording a divergence for any source that isn't in the configy
-// sysSet. Divergences are attributed to lucos_loganne — it's loganne's
-// observed /producers data that disagrees with configy, not any specific
-// unrecognised source's own repo (which may not even be a real system).
-func parseLoganneProducers(raw map[string][]string, sysSet map[string]bool, githubOrg string) ([]c4ProducerEdge, []c4Divergence) {
+// edges, recording a divergence for any source that isn't in validSources —
+// the union of configy systems, components, and scripts (#467; a producer
+// like lucos_agent is a legitimate configy script, not a system, so
+// validating against systems alone false-positives on it). Divergences are
+// attributed to lucos_loganne — it's loganne's observed /producers data that
+// disagrees with configy, not any specific unrecognised source's own repo
+// (which may not even be a real system).
+func parseLoganneProducers(raw map[string][]string, validSources map[string]bool, githubOrg string) ([]c4ProducerEdge, []c4Divergence) {
 	var edges []c4ProducerEdge
 	var divergences []c4Divergence
 	for source, types := range raw {
-		if !sysSet[source] {
+		if !validSources[source] {
 			divergences = append(divergences, c4Divergence{
 				Repo:    githubOrg + "/lucos_loganne",
 				ID:      "c4-loganne-producer-" + dslIdent(source),
-				Message: fmt.Sprintf("- loganne producer `%s` is not a known configy system", source),
+				Message: fmt.Sprintf("- loganne producer `%s` is not a known configy system, component, or script", source),
 			})
 			continue
 		}
@@ -539,6 +547,31 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 	// Shared HTTP client for all live endpoint probes (/_info and /producers).
 	infoClient := &http.Client{Timeout: c4InfoTimeout}
 
+	// Loganne producers may be configy systems, components, or scripts (#467)
+	// — a legitimate producer like lucos_agent lives in scripts.yaml, not
+	// systems.yaml, so validating against sysSet alone false-positives on it.
+	// Fetch failures here are non-critical: they just mean components/scripts
+	// won't be recognised as valid producers this sweep (degrading to the
+	// pre-fix systems-only validation), not a sweep error.
+	producerValidSources := make(map[string]bool, len(sysSet))
+	for id := range sysSet {
+		producerValidSources[id] = true
+	}
+	if components, err := s.fetchConfigyComponents(); err != nil {
+		slog.Warn("C4: failed to fetch configy components for producer validation", "error", err)
+	} else {
+		for _, c := range components {
+			producerValidSources[c.ID] = true
+		}
+	}
+	if scripts, err := s.fetchConfigyScripts(); err != nil {
+		slog.Warn("C4: failed to fetch configy scripts for producer validation", "error", err)
+	} else {
+		for _, sc := range scripts {
+			producerValidSources[sc.ID] = true
+		}
+	}
+
 	// 2b. Probe loganne's /producers endpoint for observed async-producer edges.
 	// This is non-critical: failure is logged and produces an empty producer set,
 	// not a sweep error. The loganne domain is resolved from the domain2sys map.
@@ -556,7 +589,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 		if probeErr != nil {
 			slog.Warn("C4: failed to probe loganne /producers", "error", probeErr)
 		} else {
-			producerEdges, producerDivergences = parseLoganneProducers(raw, sysSet, s.githubOrg)
+			producerEdges, producerDivergences = parseLoganneProducers(raw, producerValidSources, s.githubOrg)
 		}
 	} else {
 		slog.Warn("C4: lucos_loganne has no domain in configy; skipping /producers probe")

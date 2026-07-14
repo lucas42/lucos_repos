@@ -154,6 +154,28 @@ func TestParseLoganneProducers_UnknownSourceRaisesDivergence(t *testing.T) {
 	}
 }
 
+// TestParseLoganneProducers_ComponentAndScriptSourcesAreValid verifies that a
+// producer whose source is a configy component or script (not a system) is
+// treated as valid — the false-positive fixed in #467 — as long as it's in
+// the validSources set passed in.
+func TestParseLoganneProducers_ComponentAndScriptSourcesAreValid(t *testing.T) {
+	raw := map[string][]string{
+		"lucos_agent":       {"deployTriggered"}, // configy script
+		"lucos_media_utils": {"tagRewritten"},    // configy component
+	}
+	validSources := map[string]bool{
+		"lucos_agent":       true, // from configy /scripts
+		"lucos_media_utils": true, // from configy /components
+	}
+	edges, divs := parseLoganneProducers(raw, validSources, "lucas42")
+	if len(divs) != 0 {
+		t.Errorf("expected no divergences for component/script producers, got: %v", divs)
+	}
+	if len(edges) != 2 {
+		t.Fatalf("expected 2 edges, got %d: %v", len(edges), edges)
+	}
+}
+
 // TestGenerateC4DSL_ContainsExpectedSections verifies that the generated DSL
 // contains the workspace declaration, model block, all systems, and edges.
 func TestGenerateC4DSL_ContainsExpectedSections(t *testing.T) {
