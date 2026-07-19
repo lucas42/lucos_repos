@@ -44,6 +44,16 @@ type c4ProducerEdge struct {
 	Event  string // loganne event name emitted
 }
 
+// c4ProducerElement is a Loganne event producer that is a configy component
+// or script rather than a system, and so has no softwareSystem element
+// declared for it already. #467 (Render decision, lucas42, 2026-07-18):
+// producer edges are drawn for these sources too, which means they need
+// their own declared C4 element to draw the edge from.
+type c4ProducerElement struct {
+	ID   string // configy component/script ID
+	Kind string // "component" or "script"
+}
+
 // c4InfoCheck holds just the dependsOn field from a single /_info check entry.
 // The value may be a string or a JSON array of strings.
 type c4InfoCheck struct {
@@ -71,13 +81,14 @@ type c4Divergence struct {
 
 // c4Model holds the complete derived C4 model ready for rendering.
 type c4Model struct {
-	systems       []configySystem  // sorted by ID
-	sysSet        map[string]bool  // set of all system IDs (for edge validation)
-	syncEdges     []c4SyncEdge     // sorted by (From, To)
-	asyncEdges    []c4AsyncEdge    // sorted by (Consumer, Event)
-	producerEdges []c4ProducerEdge // sorted by (Source, Event)
-	divergences   []c4Divergence   // sorted by Message
-	unreachable   []string         // sorted system IDs that did not respond to /_info
+	systems          []configySystem     // sorted by ID
+	sysSet           map[string]bool     // set of all system IDs (for edge validation)
+	syncEdges        []c4SyncEdge        // sorted by (From, To)
+	asyncEdges       []c4AsyncEdge       // sorted by (Consumer, Event)
+	producerEdges    []c4ProducerEdge    // sorted by (Source, Event)
+	producerElements []c4ProducerElement // sorted by ID; non-system producer sources needing a declared element
+	divergences      []c4Divergence      // sorted by Message
+	unreachable      []string            // sorted system IDs that did not respond to /_info
 }
 
 // dslIdent converts a system name to a Structurizr DSL-safe identifier by
@@ -101,6 +112,10 @@ func generateC4DSL(m c4Model) string {
 		fmt.Fprintf(&b, "        %s = softwareSystem \"%s\" \"%s\"\n",
 			dslIdent(sys.ID), sys.ID, domain)
 	}
+	for _, elem := range m.producerElements {
+		fmt.Fprintf(&b, "        %s = element \"%s\" \"configy %s (event producer)\"\n",
+			dslIdent(elem.ID), elem.ID, elem.Kind)
+	}
 	b.WriteString("\n")
 	b.WriteString("        # sync dependencies (/_info dependsOn)\n")
 	for _, edge := range m.syncEdges {
@@ -111,14 +126,12 @@ func generateC4DSL(m c4Model) string {
 	}
 	b.WriteString("\n")
 	b.WriteString("        # async event producers (→ loganne)\n")
-	// Only drawn for real systems (a declared softwareSystem element exists to draw
-	// the arrow from) — component/script producers pass validation (#467) but have
-	// no C4 element, so they're valid yet not rendered pending a diagram decision.
+	// Drawn for every validated producer (#467, Render decision): systems get
+	// an edge from their softwareSystem element, component/script producers
+	// get one from the element declared for them above.
 	for _, edge := range m.producerEdges {
-		if m.sysSet[edge.Source] {
-			fmt.Fprintf(&b, "        %s -> lucos_loganne \"emits %s\"\n",
-				dslIdent(edge.Source), edge.Event)
-		}
+		fmt.Fprintf(&b, "        %s -> lucos_loganne \"emits %s\"\n",
+			dslIdent(edge.Source), edge.Event)
 	}
 	b.WriteString("\n")
 	b.WriteString("        # async event subscriptions (loganne → consumers)\n")
@@ -151,12 +164,11 @@ func generateC4Mermaid(m c4Model) string {
 		connected[edge.Consumer] = true
 		connected["lucos_loganne"] = true
 	}
-	// Same real-systems-only restriction as generateC4DSL (see comment there).
+	// Drawn for every validated producer, system or not (#467, Render decision)
+	// — see generateC4DSL.
 	for _, edge := range m.producerEdges {
-		if m.sysSet[edge.Source] {
-			connected[edge.Source] = true
-			connected["lucos_loganne"] = true
-		}
+		connected[edge.Source] = true
+		connected["lucos_loganne"] = true
 	}
 
 	sortedConnected := make([]string, 0, len(connected))
@@ -180,11 +192,10 @@ func generateC4Mermaid(m c4Model) string {
 		}
 	}
 	b.WriteString("  %% async producers (dotted, → loganne)\n")
-	// Same real-systems-only restriction as generateC4DSL (see comment there).
+	// Drawn for every validated producer, system or not (#467, Render decision)
+	// — see generateC4DSL.
 	for _, edge := range m.producerEdges {
-		if m.sysSet[edge.Source] {
-			fmt.Fprintf(&b, "  %s -.%s.-> lucos_loganne\n", dslIdent(edge.Source), edge.Event)
-		}
+		fmt.Fprintf(&b, "  %s -.%s.-> lucos_loganne\n", dslIdent(edge.Source), edge.Event)
 	}
 	b.WriteString("  %% async consumers (dotted, loganne →)\n")
 	for _, edge := range m.asyncEdges {
@@ -321,6 +332,32 @@ func parseLoganneProducers(raw map[string][]string, validSources map[string]bool
 	})
 	sort.Slice(divergences, func(i, j int) bool { return divergences[i].Message < divergences[j].Message })
 	return edges, divergences
+}
+
+// buildProducerElements derives the set of non-system producer edge sources
+// (components/scripts) that need their own declared C4 element, since
+// generateC4DSL only auto-declares elements for systems. #467 (Render
+// decision, lucas42, 2026-07-18): every validated producer's edge is now
+// drawn, so a source that isn't a system still needs somewhere to draw it
+// from. kindByID maps a non-system source ID to "component" or "script";
+// a source found in edges but missing from kindByID (shouldn't happen given
+// the validSources invariant upstream) falls back to the generic "producer".
+func buildProducerElements(edges []c4ProducerEdge, sysSet map[string]bool, kindByID map[string]string) []c4ProducerElement {
+	var elements []c4ProducerElement
+	seen := make(map[string]bool)
+	for _, edge := range edges {
+		if sysSet[edge.Source] || seen[edge.Source] {
+			continue
+		}
+		seen[edge.Source] = true
+		kind := kindByID[edge.Source]
+		if kind == "" {
+			kind = "producer"
+		}
+		elements = append(elements, c4ProducerElement{ID: edge.Source, Kind: kind})
+	}
+	sort.Slice(elements, func(i, j int) bool { return elements[i].ID < elements[j].ID })
+	return elements
 }
 
 // parseLoganneWebhooks parses loganne's webhooks-config.json and returns a
@@ -557,11 +594,17 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 	for id := range sysSet {
 		producerValidSources[id] = true
 	}
+	// producerElementKind records, for non-system producer sources, whether
+	// each is a component or a script — used below to declare a C4 element
+	// for it (#467, Render decision) so its producer edge has somewhere to
+	// originate from in the diagram.
+	producerElementKind := make(map[string]string)
 	if components, err := s.fetchConfigyComponents(); err != nil {
 		slog.Warn("C4: failed to fetch configy components for producer validation", "error", err)
 	} else {
 		for _, c := range components {
 			producerValidSources[c.ID] = true
+			producerElementKind[c.ID] = "component"
 		}
 	}
 	if scripts, err := s.fetchConfigyScripts(); err != nil {
@@ -569,6 +612,7 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 	} else {
 		for _, sc := range scripts {
 			producerValidSources[sc.ID] = true
+			producerElementKind[sc.ID] = "script"
 		}
 	}
 
@@ -594,6 +638,8 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 	} else {
 		slog.Warn("C4: lucos_loganne has no domain in configy; skipping /producers probe")
 	}
+
+	producerElements := buildProducerElements(producerEdges, sysSet, producerElementKind)
 
 	// 3. Probe /_info for each system that has a public domain.
 	var syncEdges []c4SyncEdge
@@ -655,13 +701,14 @@ func (s *AuditSweeper) generateAndCommitC4() error {
 	s.routeC4DivergencesToIssues(token, systems, allDivergences)
 
 	model := c4Model{
-		systems:       systems,
-		sysSet:        sysSet,
-		syncEdges:     syncEdges,
-		asyncEdges:    asyncEdges,
-		producerEdges: producerEdges,
-		divergences:   allDivergences,
-		unreachable:   unreachable,
+		systems:          systems,
+		sysSet:           sysSet,
+		syncEdges:        syncEdges,
+		asyncEdges:       asyncEdges,
+		producerEdges:    producerEdges,
+		producerElements: producerElements,
+		divergences:      allDivergences,
+		unreachable:      unreachable,
 	}
 
 	dsl := generateC4DSL(model)
