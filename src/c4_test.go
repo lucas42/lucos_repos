@@ -154,6 +154,69 @@ func TestParseLoganneProducers_UnknownSourceRaisesDivergence(t *testing.T) {
 	}
 }
 
+// TestParseLoganneProducers_ComponentAndScriptSourcesAreValid verifies that a
+// producer whose source is a configy component or script (not a system) is
+// treated as valid — the false-positive fixed in #467 — as long as it's in
+// the validSources set passed in.
+func TestParseLoganneProducers_ComponentAndScriptSourcesAreValid(t *testing.T) {
+	raw := map[string][]string{
+		"lucos_agent":       {"deployTriggered"}, // configy script
+		"lucos_media_utils": {"tagRewritten"},    // configy component
+	}
+	validSources := map[string]bool{
+		"lucos_agent":       true, // from configy /scripts
+		"lucos_media_utils": true, // from configy /components
+	}
+	edges, divs := parseLoganneProducers(raw, validSources, "lucas42")
+	if len(divs) != 0 {
+		t.Errorf("expected no divergences for component/script producers, got: %v", divs)
+	}
+	if len(edges) != 2 {
+		t.Fatalf("expected 2 edges, got %d: %v", len(edges), edges)
+	}
+}
+
+// TestBuildProducerElements_SkipsSystemsAndDedupsNonSystems verifies that
+// buildProducerElements only returns elements for non-system producer
+// sources, dedups repeated sources across multiple edges, and looks up each
+// one's kind from kindByID (#467, Render decision).
+func TestBuildProducerElements_SkipsSystemsAndDedupsNonSystems(t *testing.T) {
+	edges := []c4ProducerEdge{
+		{Source: "lucos_photos", Event: "photoUploaded"}, // system — should be skipped
+		{Source: "lucos_agent", Event: "deployTriggered"},
+		{Source: "lucos_agent", Event: "plannedMaintenance"}, // same source again — should dedup
+		{Source: "lucos_media_utils", Event: "tagRewritten"},
+	}
+	sysSet := map[string]bool{"lucos_photos": true}
+	kindByID := map[string]string{
+		"lucos_agent":       "script",
+		"lucos_media_utils": "component",
+	}
+
+	elements := buildProducerElements(edges, sysSet, kindByID)
+
+	if len(elements) != 2 {
+		t.Fatalf("expected 2 elements, got %d: %v", len(elements), elements)
+	}
+	// Sorted by ID: lucos_agent before lucos_media_utils.
+	if elements[0].ID != "lucos_agent" || elements[0].Kind != "script" {
+		t.Errorf("expected first element lucos_agent/script, got %+v", elements[0])
+	}
+	if elements[1].ID != "lucos_media_utils" || elements[1].Kind != "component" {
+		t.Errorf("expected second element lucos_media_utils/component, got %+v", elements[1])
+	}
+}
+
+// TestBuildProducerElements_MissingKindFallsBackToProducer verifies the
+// defensive fallback for a source with no entry in kindByID.
+func TestBuildProducerElements_MissingKindFallsBackToProducer(t *testing.T) {
+	edges := []c4ProducerEdge{{Source: "mystery_source", Event: "someEvent"}}
+	elements := buildProducerElements(edges, map[string]bool{}, map[string]string{})
+	if len(elements) != 1 || elements[0].Kind != "producer" {
+		t.Errorf("expected fallback kind %q, got %v", "producer", elements)
+	}
+}
+
 // TestGenerateC4DSL_ContainsExpectedSections verifies that the generated DSL
 // contains the workspace declaration, model block, all systems, and edges.
 func TestGenerateC4DSL_ContainsExpectedSections(t *testing.T) {
@@ -203,6 +266,40 @@ func TestGenerateC4DSL_LoganneAppearsAsSoftwareSystem(t *testing.T) {
 	dsl := generateC4DSL(m)
 	if !strings.Contains(dsl, `lucos_loganne = softwareSystem`) {
 		t.Error("expected lucos_loganne to appear as a softwareSystem")
+	}
+}
+
+// TestGenerateC4DSL_ProducerElementForComponentScript verifies that a
+// non-system producer source gets its own declared "element" and a producer
+// edge is drawn from it — #467, Render decision (previously these producers
+// validated cleanly but were silently omitted from the diagram).
+func TestGenerateC4DSL_ProducerElementForComponentScript(t *testing.T) {
+	m := sampleC4Model()
+	m.producerEdges = append(m.producerEdges, c4ProducerEdge{Source: "lucos_agent", Event: "plannedMaintenance"})
+	m.producerElements = []c4ProducerElement{{ID: "lucos_agent", Kind: "script"}}
+	dsl := generateC4DSL(m)
+
+	if !strings.Contains(dsl, `lucos_agent = element "lucos_agent" "configy script (event producer)"`) {
+		t.Errorf("expected declared element for lucos_agent script producer, got:\n%s", dsl)
+	}
+	if !strings.Contains(dsl, `lucos_agent -> lucos_loganne "emits plannedMaintenance"`) {
+		t.Errorf("expected producer edge for lucos_agent, got:\n%s", dsl)
+	}
+}
+
+// TestGenerateC4Mermaid_ProducerEdgeForComponentScript is the Mermaid
+// equivalent of TestGenerateC4DSL_ProducerElementForComponentScript.
+func TestGenerateC4Mermaid_ProducerEdgeForComponentScript(t *testing.T) {
+	m := sampleC4Model()
+	m.producerEdges = append(m.producerEdges, c4ProducerEdge{Source: "lucos_agent", Event: "plannedMaintenance"})
+	m.producerElements = []c4ProducerElement{{ID: "lucos_agent", Kind: "script"}}
+	mermaid := generateC4Mermaid(m)
+
+	if !strings.Contains(mermaid, `lucos_agent["lucos_agent"]`) {
+		t.Errorf("expected lucos_agent node in Mermaid connected core, got:\n%s", mermaid)
+	}
+	if !strings.Contains(mermaid, "lucos_agent -.plannedMaintenance.-> lucos_loganne") {
+		t.Errorf("expected dotted producer edge for lucos_agent, got:\n%s", mermaid)
 	}
 }
 
@@ -302,9 +399,9 @@ func TestParseLoganneWebhooks_BasicParsing(t *testing.T) {
 		]
 	}`)
 	domain2sys := map[string]string{
-		"arachne.l42.eu":        "lucos_arachne",
+		"arachne.l42.eu":         "lucos_arachne",
 		"media-weighting.l42.eu": "lucos_media_weightings",
-		"monitoring.l42.eu":     "lucos_monitoring",
+		"monitoring.l42.eu":      "lucos_monitoring",
 	}
 
 	edges, divs := parseLoganneWebhooks(webhooksJSON, domain2sys, "lucas42")
