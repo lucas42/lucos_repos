@@ -269,9 +269,6 @@ func TestGenerateC4DSL_LoganneAppearsAsSoftwareSystem(t *testing.T) {
 	}
 }
 
-// TestGenerateC4Mermaid_ConnectedCoreOnly verifies that only systems with at
-// least one edge appear in the Mermaid output (not e.g. lucos_router which has
-// no edges in the sample model).
 // TestGenerateC4DSL_ProducerElementForComponentScript verifies that a
 // non-system producer source gets its own declared "element" and a producer
 // edge is drawn from it — #467, Render decision (previously these producers
@@ -306,6 +303,9 @@ func TestGenerateC4Mermaid_ProducerEdgeForComponentScript(t *testing.T) {
 	}
 }
 
+// TestGenerateC4Mermaid_ConnectedCoreOnly verifies that only systems with at
+// least one edge appear in the Mermaid output (not e.g. lucos_router which has
+// no edges in the sample model).
 func TestGenerateC4Mermaid_ConnectedCoreOnly(t *testing.T) {
 	m := sampleC4Model()
 	mermaid := generateC4Mermaid(m)
