@@ -208,6 +208,15 @@ func main() {
 			secondsSinceLastSweepMetric.Value = time.Since(completedAt).Seconds()
 		}
 
+		// Compute seconds since last PR sweep for the metrics field.
+		secondsSinceLastPRSweepMetric := Metric {
+			Value: -1,
+			TechDetail: "The number of seconds since a PR sweep was last completed.  (Minus one if it hasn't yet completed)",
+		}
+		if !prData.LastFetchAt.IsZero() {
+			secondsSinceLastPRSweepMetric.Value = time.Since(prData.LastFetchAt).Seconds()
+		}
+
 		info := InfoResponse{
 			System: system,
 			Checks: map[string]Check {
@@ -216,7 +225,8 @@ func main() {
 				"stale-dependabot-prs": staleDependabotCheck,
 			},
 			Metrics: map[string]Metric {
-				"seconds_since_last_sweep": secondsSinceLastSweepMetric,
+				"seconds_since_last_sweep":    secondsSinceLastSweepMetric,
+				"seconds_since_last_pr_sweep": secondsSinceLastPRSweepMetric,
 			},
 			CI: map[string]string{
 				"circle": "gh/lucas42/lucos_repos",
