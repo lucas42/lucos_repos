@@ -48,6 +48,36 @@ const auditRetryTailDelay = 30 * time.Second
 // pass. A package-level variable so tests can replace it with a no-op.
 var auditRetryTailSleep = time.Sleep
 
+// auditSweepMaxWaitDefault is how long the scheduled sweep's
+// RateLimitTransport waits for a GitHub rate-limit reset before giving up.
+// Longer than conventions' 5m default, which is calibrated for live
+// request-serving paths: this is a background job on a 6h ticker with no
+// caller blocked on it, and TriggerSweep() skips ticks while a sweep is
+// already running, so waiting costs only a slower sweep. Same shared quota
+// and same reasoning as the dry-run path (lucas42/lucos_repos#462).
+const auditSweepMaxWaitDefault = 30 * time.Minute
+
+// auditSweepMaxWaitEnvVar overrides auditSweepMaxWaitDefault when set, as a
+// Go duration string (e.g. "45m").
+const auditSweepMaxWaitEnvVar = "AUDIT_SWEEP_MAX_WAIT"
+
+// auditSweepMaxWait returns the configured max-wait for the sweep's
+// RateLimitTransport, falling back to auditSweepMaxWaitDefault if
+// AUDIT_SWEEP_MAX_WAIT is unset or unparseable.
+func auditSweepMaxWait() time.Duration {
+	v := os.Getenv(auditSweepMaxWaitEnvVar)
+	if v == "" {
+		return auditSweepMaxWaitDefault
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		slog.Warn("invalid AUDIT_SWEEP_MAX_WAIT value; using default",
+			"value", v, "default", auditSweepMaxWaitDefault)
+		return auditSweepMaxWaitDefault
+	}
+	return d
+}
+
 // configySystem represents a single entry from the configy /systems endpoint.
 type configySystem struct {
 	ID                    string   `json:"id"`
@@ -266,8 +296,11 @@ func (s *AuditSweeper) sweep() error {
 	// RateLimitTransport sits outside the throttle so rate-limit 403s are never
 	// cached — they are either retried (after waiting for reset) or surfaced
 	// as distinct errors rather than being misattributed as permission failures.
+	sweepMaxWait := auditSweepMaxWait()
+
 	throttleTransport := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
 	rateLimitTransport := conventions.NewRateLimitTransport(throttleTransport)
+	rateLimitTransport.MaxWait = sweepMaxWait
 	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
 	conventions.SetHTTPClient(cachingClient)
@@ -412,6 +445,7 @@ func (s *AuditSweeper) sweep() error {
 		// (lucas42/lucos_repos#433).
 		retryThrottle := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
 		retryRateLimit := conventions.NewRateLimitTransport(retryThrottle)
+		retryRateLimit.MaxWait = sweepMaxWait
 		conventions.SetHTTPClient(&http.Client{Transport: retryRateLimit})
 
 		for _, pc := range pendingRetries {
