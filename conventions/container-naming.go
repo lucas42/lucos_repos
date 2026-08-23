@@ -93,7 +93,7 @@ func init() {
 				return ConventionResult{
 					Convention: "container-naming",
 					Pass:       true,
-					Detail:     "All container names follow the naming convention",
+					Detail:     "All container_name values set in docker-compose.yml (test-profile services excluded) follow the naming convention",
 				}
 			}
 

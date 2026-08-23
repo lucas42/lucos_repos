@@ -155,13 +155,16 @@ func init() {
 			// the CodeQL workflow was updated to run go). Only runs when the workflow
 			// has an explicit matrix, so repos without a workflow or without an
 			// explicit language list are not flagged.
+			languageMatrixCheckSkipped := false
 			if HasCodeQLLanguage(languages) {
 				workflowLangs, wlErr := GitHubCodeQLExplicitLanguagesFromBase(base, repo.GitHubToken, repo.Name)
 				if wlErr != nil {
 					slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-codeql-languages", "error", wlErr)
 					// Non-fatal: skip this sub-check on error rather than returning an
 					// error result — a workflow parse failure should not block the other
-					// sub-checks from reporting their findings.
+					// sub-checks from reporting their findings. Tracked so the pass
+					// Detail below doesn't claim this sub-check ran when it didn't.
+					languageMatrixCheckSkipped = true
 				} else if len(workflowLangs) > 0 {
 					workflowLangSet := make(map[string]bool)
 					for _, l := range workflowLangs {
@@ -194,6 +197,7 @@ func init() {
 					Err:        fmt.Errorf("error checking for .github/dependabot.yml: %w", err),
 				}
 			}
+			dependabotSatisfiabilityCheckSkipped := false
 			if hasDependabot {
 				depInfo, err := GitHubRecentDependabotPRInfoFromBase(base, repo.GitHubToken, repo.Name)
 				if err != nil {
@@ -202,6 +206,12 @@ func init() {
 						Convention: "required-status-checks-coherent",
 						Err:        fmt.Errorf("error fetching Dependabot PR checks: %w", err),
 					}
+				}
+				if depInfo == nil {
+					// No recent Dependabot PR to check against — tracked so the
+					// pass Detail below doesn't claim Dependabot-satisfiability
+					// was verified when there was nothing to verify it against.
+					dependabotSatisfiabilityCheckSkipped = true
 				}
 				if depInfo != nil {
 					depReported := make(map[string]bool)
@@ -232,10 +242,21 @@ func init() {
 			}
 
 			if len(issues) == 0 {
+				detail := fmt.Sprintf("all %d required status checks are coherent (valid on HEAD, CodeQL covered, Dependabot-satisfiable)", len(requiredChecks))
+				var skipped []string
+				if languageMatrixCheckSkipped {
+					skipped = append(skipped, "CodeQL language-matrix coverage (could not fetch codeql-analysis.yml)")
+				}
+				if dependabotSatisfiabilityCheckSkipped {
+					skipped = append(skipped, "Dependabot-satisfiability (no recent Dependabot PR to check against)")
+				}
+				if len(skipped) > 0 {
+					detail += fmt.Sprintf(" — not checked: %s", strings.Join(skipped, "; "))
+				}
 				return ConventionResult{
 					Convention: "required-status-checks-coherent",
 					Pass:       true,
-					Detail:     fmt.Sprintf("all %d required status checks are coherent (valid on HEAD, CodeQL covered, Dependabot-satisfiable)", len(requiredChecks)),
+					Detail:     detail,
 				}
 			}
 

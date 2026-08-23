@@ -156,7 +156,7 @@ func init() {
 			}
 
 			if len(missing) == 0 {
-				return ConventionResult{Convention: conventionID, Pass: true, Detail: "docker Dependabot updater entries present for all built-service Dockerfile directories"}
+				return ConventionResult{Convention: conventionID, Pass: true, Detail: "docker Dependabot updater entries present for all non-test-profile built-service Dockerfile directories"}
 			}
 
 			return ConventionResult{

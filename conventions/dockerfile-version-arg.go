@@ -173,7 +173,7 @@ func init() {
 				return ConventionResult{
 					Convention: "dockerfile-exposes-version",
 					Pass:       true,
-					Detail:     "All service Dockerfiles declare ARG VERSION and ENV VERSION=$VERSION, and all built services use ${VERSION:-latest} in their image tag",
+					Detail:     "All non-test-profile built services' Dockerfiles declare ARG VERSION and ENV VERSION=$VERSION, and use ${VERSION:-latest} in their image tag",
 				}
 			}
 

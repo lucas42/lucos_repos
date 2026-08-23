@@ -361,7 +361,7 @@ func init() {
 				return ConventionResult{
 					Convention: "env_var_passthrough",
 					Pass:       true,
-					Detail:     "All env vars read by application code are declared as passthrough in docker-compose.yml",
+					Detail:     "All env vars read by non-test application code in a scanned language are declared as passthrough in docker-compose.yml",
 				}
 			}
 

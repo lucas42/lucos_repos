@@ -94,7 +94,7 @@ func init() {
 				return ConventionResult{
 					Convention: "docker-healthcheck-on-built-services",
 					Pass:       true,
-					Detail:     "All built services define a healthcheck",
+					Detail:     "All non-test-profile built services define a healthcheck",
 				}
 			}
 
