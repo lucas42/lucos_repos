@@ -8,6 +8,23 @@ jobs:
       - image: golang:1.26
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - go-mod-v1-{{ checksum "go.sum" }}
+      - run:
+          name: Download modules
+          # Retries because a cold cache (ie any go.sum change) hits proxy.golang.org
+          command: |
+            for attempt in 1 2 3; do
+              go mod download && exit 0
+              echo "go mod download failed (attempt $attempt of 3); retrying in 10s"
+              sleep 10
+            done
+            exit 1
+      - save_cache:
+          key: go-mod-v1-{{ checksum "go.sum" }}
+          paths:
+            - /go/pkg/mod
       - run:
           name: Run tests
           command: go test ./...
