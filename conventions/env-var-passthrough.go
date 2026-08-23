@@ -251,7 +251,7 @@ func init() {
 
 	Register(Convention{
 		ID:          "env-var-passthrough",
-		Description: "Every env var read by non-test application code, excluding runtime-supplied OS vars and noenv-annotated lines, is declared as passthrough in docker-compose.yml",
+		Description: "Every env var read by non-test application code in a scanned language, excluding runtime-supplied OS vars and noenv-annotated lines, is declared as passthrough in docker-compose.yml",
 		Rationale: "Docker Compose only forwards variables listed in a service's `environment:` block into " +
 			"the container. A variable read by application code but absent from that block is silently " +
 			"empty at runtime — the feature breaks without any error or alert. This was the root cause of " +
@@ -263,7 +263,10 @@ func init() {
 			"intentional config — no change needed. Test files and runtime-supplied OS/shell variables " +
 			"(`HOME`, `PATH`, `HOSTNAME`, `LC_*`, etc.) are excluded from scanning automatically. " +
 			"For any other variable that is genuinely not a compose concern, add a `# lucos_repos: noenv MY_VAR` " +
-			"annotation (using the appropriate comment syntax for the language) to the line where it is read.",
+			"annotation (using the appropriate comment syntax for the language) to the line where it is read.\n\n" +
+			"**Scanned languages:** Python, Ruby, Erlang, Go, and JavaScript/TypeScript (including JSX/TSX). " +
+			"A service written in another language (PHP, Java, Rust, C#, shell, etc.) is not scanned at all — " +
+			"passing this convention is not evidence that such a service's env vars are correctly declared.",
 		AppliesTo: []RepoType{RepoTypeSystem},
 		Check: func(repo RepoContext) ConventionResult {
 			base := repo.GitHubBaseURL
