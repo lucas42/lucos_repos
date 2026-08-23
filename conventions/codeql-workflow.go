@@ -169,9 +169,12 @@ func init() {
 			// matrix, CodeQL may skip it on PRs that don't touch files in that language,
 			// silently blocking merges.
 			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main")
+			languageMatrixCheckSkipped := false
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-required-checks", "error", err)
 				// Non-fatal: skip language matrix check if we can't fetch branch protection.
+				// Tracked so the pass Detail below doesn't claim this sub-check ran when it didn't.
+				languageMatrixCheckSkipped = true
 			} else {
 				explicitLangs := workflow.explicitLanguages()
 				explicitSet := make(map[string]bool, len(explicitLangs))
@@ -195,10 +198,14 @@ func init() {
 			}
 
 			if len(issues) == 0 {
+				detail := "All required security settings are present"
+				if languageMatrixCheckSkipped {
+					detail += " (language-matrix coverage not checked: could not fetch required status checks)"
+				}
 				return ConventionResult{
 					Convention: "codeql-workflow-security-settings",
 					Pass:       true,
-					Detail:     "All required security settings are present",
+					Detail:     detail,
 				}
 			}
 

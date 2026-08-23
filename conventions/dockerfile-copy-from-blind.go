@@ -298,7 +298,7 @@ func init() {
 				return ConventionResult{
 					Convention: conventionID,
 					Pass:       true,
-					Detail:     "No Dependabot-blind image references found",
+					Detail:     "No Dependabot-blind image references found in Dockerfiles built by non-test-profile services",
 				}
 			}
 			return ConventionResult{
