@@ -132,7 +132,7 @@ Add a `lucos/release-*` job (e.g. `lucos/release-npm`) to the `jobs:` list in a 
 
 ## `circleci-jobs-in-required-checks`
 
-CircleCI test* and build* jobs appear in the required status checks for the main branch
+CircleCI test* and build* jobs that run on the main branch appear in the required status checks for main
 
 - **Applies to:** system, component
 
@@ -180,7 +180,7 @@ Edit the `jobs:` list in `.circleci/config.yml` to include exactly one `lucos/de
 
 ## `circleci-uses-lucos-orb`
 
-CircleCI config must declare the lucos deploy orb (`lucos: lucos/deploy@0`)
+CircleCI config for repos with a docker-compose.yml must declare the lucos deploy orb (`lucos: lucos/deploy@0`)
 
 - **Applies to:** system, component
 - **Excluded repos:** lucas42/lucos_deploy_orb
@@ -286,7 +286,7 @@ jobs:
 
 ## `container-naming`
 
-Every container_name in docker-compose.yml uses the lucos_{project}_{role} naming convention
+Every container_name set in docker-compose.yml (excluding test-profile services) is the repo name, or begins with the repo name followed by an underscore
 
 - **Applies to:** system
 
@@ -455,7 +455,7 @@ The `allow: dependency-type: all` and `groups:` blocks are required by the `depe
 
 ## `docker-healthcheck-on-built-services`
 
-Every service with a build: key in docker-compose.yml also defines a healthcheck:
+Every non-test-profile service with a build: key in docker-compose.yml also defines a healthcheck:
 
 - **Applies to:** system
 
@@ -486,7 +486,7 @@ Off-the-shelf images (redis, postgres, etc.) are excluded — this rule only app
 
 ## `dockerfile-copy-from-dependabot-blind`
 
-No Dockerfile uses COPY --from=<external-image> without declaring that image as a named FROM stage, which would hide it from Dependabot
+No Dockerfile has a Dependabot-blind image reference: a COPY --from=<external-image> without a matching named FROM stage, a FROM using ARG variable substitution, or an additional_contexts entry using docker-image://
 
 - **Applies to:** system
 
@@ -545,7 +545,7 @@ The `:-latest` default means `docker compose up` still works locally without set
 
 ## `env-var-passthrough`
 
-Every env var read by application code is declared as passthrough in docker-compose.yml
+Every env var read by non-test application code, excluding runtime-supplied OS vars and noenv-annotated lines, is declared as passthrough in docker-compose.yml
 
 - **Applies to:** system
 

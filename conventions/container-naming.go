@@ -23,7 +23,7 @@ type containerNamingService struct {
 func init() {
 	Register(Convention{
 		ID:          "container-naming",
-		Description: "Every container_name in docker-compose.yml uses the lucos_{project}_{role} naming convention",
+		Description: "Every container_name set in docker-compose.yml (excluding test-profile services) is the repo name, or begins with the repo name followed by an underscore",
 		Rationale: "The ecosystem convention for container names is `lucos_{project}_{role}` (e.g. " +
 			"`lucos_photos_api`, `lucos_arachne_web`). Many older services use short names without " +
 			"any prefix (`monitoring`, `root`, `time`), which become ambiguous in `docker ps` output " +
