@@ -10,7 +10,7 @@ func init() {
 	// lucos deploy orb as "lucos: lucos/deploy@0".
 	Register(Convention{
 		ID:          "circleci-uses-lucos-orb",
-		Description: "CircleCI config must declare the lucos deploy orb (`lucos: lucos/deploy@0`)",
+		Description: "CircleCI config for repos with a docker-compose.yml must declare the lucos deploy orb (`lucos: lucos/deploy@0`)",
 		Rationale: "The lucos deploy orb provides standardised build and deploy jobs. " +
 			"Without it, repos must implement their own build/deploy logic, leading to " +
 			"inconsistency and maintenance burden.",

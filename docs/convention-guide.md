@@ -40,6 +40,8 @@ Each convention is defined as a `Convention` struct with the following fields:
 
 **Description**: This appears in the issue title alongside the ID. Keep it concise and factual -- it describes *what* is checked, not *why*. Example: "Repository has a .circleci/config.yml file".
 
+Since [ADR-0007](adr/0007-generated-convention-catalogue-single-source-of-truth.md), `Description` is rendered into the generated [convention catalogue](conventions.md), which other docs now link to instead of paraphrasing -- so it is the estate's authoritative statement of the rule, not just issue-title flavour text. It **must not assert anything the `Check` function does not actually test**: if the Check skips certain services, files, directories, languages, or filename patterns *within* a repo, that exclusion must be reflected in `Description` or `Guidance` (whichever reads more naturally), not left implicit. Repo-level scope (which repo types the convention applies to, or specific excluded repos) does **not** need restating in prose -- `AppliesTo` and `ExcludeRepos` are already rendered as their own structured bullets in the generated catalogue, and duplicating that fact in prose only creates a second copy that can drift from the source. `TestConventionCatalogueIsCurrent` verifies the catalogue is regenerated from the source, but it cannot verify the prose is *true* -- that a `Description` claiming "every X" doesn't quietly mean "every X except Y". Reviewers must check `Description` against the `Check` function's actual logic, not just against the ID. (See lucas42/lucos_repos#493 for the incident class this guards against: a `Description` overclaiming a naming rule the Check didn't enforce contributed to a bogus rename in #154.)
+
 **Rationale**: This is the most important field for issue quality. It answers the question a reader will have when they see the issue: "Why should I care?" Write it as if explaining to someone who is unfamiliar with the convention. Example: "Without a CircleCI config, changes to this repository are not automatically built, tested, or deployed. This means code changes require manual intervention to reach production."
 
 **Guidance**: Concrete, actionable suggestions for fixing the violation. Reference specific files, templates, or documentation where possible. If there are cases where the convention should not apply, say so here and point the reader toward `AppliesTo`. Example: "Add a `.circleci/config.yml` following the standard lucos CI template. If this repository is intentionally not deployed, consider whether it should be excluded from this convention via `AppliesTo`."
@@ -123,7 +125,7 @@ When reviewing a PR that adds or modifies a convention, verify:
 
 - [ ] The convention file is in `conventions/` and named after the convention ID
 - [ ] `ID` is descriptive, kebab-case, and stable (not likely to need renaming)
-- [ ] `Description` clearly explains what is checked, without restating the ID
+- [ ] `Description` clearly explains what is checked, without restating the ID, and does not assert anything the `Check` function doesn't actually test (material exclusions belong in `Description` or `Guidance`)
 - [ ] `Rationale` explains why the convention matters -- what goes wrong if violated
 - [ ] `Guidance` suggests concrete steps to fix violations, referencing templates or docs where possible
 - [ ] `AppliesTo` is set appropriately (not left empty by default when a narrower scope would be correct)

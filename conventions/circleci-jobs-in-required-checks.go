@@ -24,7 +24,7 @@ func init() {
 	// main, so auto-merge cannot race ahead of CI.
 	Register(Convention{
 		ID:          "circleci-jobs-in-required-checks",
-		Description: "CircleCI test* and build* jobs appear in the required status checks for the main branch",
+		Description: "CircleCI test* and build* jobs that run on the main branch appear in the required status checks for main",
 		Rationale:   "Without required status checks, auto-merge can complete before CircleCI finishes — meaning a broken build or failing test can land silently on main. Requiring test and build jobs as status checks ensures that code cannot merge until CI has confirmed they pass.",
 		Guidance:    "Go to the repository's Settings → Branches → Branch protection rules for `main`. Under 'Require status checks to pass before merging', add each CircleCI test and build job as a required check. The exact check name must match what CircleCI reports in the GitHub Checks tab (e.g. `lucos/build-amd64` for orb jobs, or `test` for simple jobs). Trigger a pull request first to make the check names available in the search box.",
 		AppliesTo:   []RepoType{RepoTypeSystem, RepoTypeComponent},
