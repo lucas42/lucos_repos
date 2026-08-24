@@ -1,6 +1,6 @@
 FROM lucas42/lucos_navbar:2.3.2 AS navbar
 
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 
 WORKDIR /go/src/lucos_repos
 
