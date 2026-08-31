@@ -9,7 +9,18 @@ import (
 )
 
 // TestThrottleTransport_PacesSequentialRequests verifies that consecutive
-// requests are spaced at least MinInterval apart.
+// requests are spaced at least MinInterval apart, in aggregate across the
+// whole run.
+//
+// This asserts on total elapsed (first call to last call) rather than on
+// each pairwise gap. Timestamps are taken inside the mock, after dispatch,
+// so a pairwise gap carries per-call jitter (mutex/allocation cost, or —
+// after a sleep — scheduler wake-up delay) on both ends and can measure
+// fractionally under MinInterval even though the transport paced the
+// underlying slot reservations exactly (lucas42/lucos_repos#492). Summing
+// telescopes that jitter away: only the first call's dispatch-only cost and
+// the last call's post-sleep wake cost survive, and the latter is never
+// smaller, since time.Sleep does not return early.
 func TestThrottleTransport_PacesSequentialRequests(t *testing.T) {
 	var callTimes []time.Time
 	var mu sync.Mutex
@@ -21,23 +32,24 @@ func TestThrottleTransport_PacesSequentialRequests(t *testing.T) {
 	})
 
 	const interval = 20 * time.Millisecond
+	const n = 3
 	transport := NewThrottleTransport(mock, interval)
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < n; i++ {
 		req, _ := http.NewRequest("GET", "http://example.com/test", nil)
 		if _, err := transport.RoundTrip(req); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
 
-	if len(callTimes) != 3 {
-		t.Fatalf("expected 3 calls, got %d", len(callTimes))
+	if len(callTimes) != n {
+		t.Fatalf("expected %d calls, got %d", n, len(callTimes))
 	}
-	for i := 1; i < len(callTimes); i++ {
-		gap := callTimes[i].Sub(callTimes[i-1])
-		if gap < interval {
-			t.Errorf("call %d..%d gap %s is less than MinInterval %s", i-1, i, gap, interval)
-		}
+
+	elapsed := callTimes[n-1].Sub(callTimes[0])
+	minExpected := time.Duration(n-1) * interval
+	if elapsed < minExpected {
+		t.Errorf("expected at least %s elapsed across %d paced requests, got %s", minExpected, n, elapsed)
 	}
 }
 
