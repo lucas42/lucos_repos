@@ -38,7 +38,7 @@ func init() {
 
 			// Step 1: fetch required status checks. If none are configured,
 			// there's nothing to check — pass trivially.
-			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main")
+			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-branch-protection", "error", err)
 				return ConventionResult{
@@ -58,7 +58,7 @@ func init() {
 
 			// Step 2: fetch actual checks reported on HEAD of main, then
 			// identify stale required checks.
-			statusContexts, err := GitHubCommitStatusContextsFromBase(base, repo.GitHubToken, repo.Name, "heads/main")
+			statusContexts, err := GitHubCommitStatusContextsFromBase(base, repo.GitHubToken, repo.Name, "heads/main", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-commit-statuses", "error", err)
 				return ConventionResult{
@@ -66,7 +66,7 @@ func init() {
 					Err:        fmt.Errorf("error fetching commit statuses for HEAD on main: %w", err),
 				}
 			}
-			checkRunNames, err := GitHubCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name, "heads/main")
+			checkRunNames, err := GitHubCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name, "heads/main", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-check-runs", "error", err)
 				return ConventionResult{
@@ -106,14 +106,14 @@ func init() {
 					// If the parent lookup fails, fall back to flagging
 					// (conservative — this is a security-relevant check).
 					parentReported := make(map[string]bool)
-					if parentSHAs, err := GitHubCommitParentsFromBase(base, repo.GitHubToken, repo.Name, "heads/main"); err == nil && len(parentSHAs) > 0 {
+					if parentSHAs, err := GitHubCommitParentsFromBase(base, repo.GitHubToken, repo.Name, "heads/main", repo.Client); err == nil && len(parentSHAs) > 0 {
 						parentSHA := parentSHAs[0]
-						if parentStatuses, err2 := GitHubCommitStatusContextsFromBase(base, repo.GitHubToken, repo.Name, parentSHA); err2 == nil {
+						if parentStatuses, err2 := GitHubCommitStatusContextsFromBase(base, repo.GitHubToken, repo.Name, parentSHA, repo.Client); err2 == nil {
 							for _, ctx := range parentStatuses {
 								parentReported[ctx] = true
 							}
 						}
-						if parentRuns, err2 := GitHubCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name, parentSHA); err2 == nil {
+						if parentRuns, err2 := GitHubCheckRunNamesFromBase(base, repo.GitHubToken, repo.Name, parentSHA, repo.Client); err2 == nil {
 							for _, name := range parentRuns {
 								parentReported[name] = true
 							}
@@ -128,7 +128,7 @@ func init() {
 			}
 
 			// Step 3: check CodeQL coverage if the repo uses CodeQL-supported languages.
-			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-languages", "error", err)
 				return ConventionResult{
@@ -157,7 +157,7 @@ func init() {
 			// explicit language list are not flagged.
 			languageMatrixCheckSkipped := false
 			if HasCodeQLLanguage(languages) {
-				workflowLangs, wlErr := GitHubCodeQLExplicitLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+				workflowLangs, wlErr := GitHubCodeQLExplicitLanguagesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 				if wlErr != nil {
 					slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-codeql-languages", "error", wlErr)
 					// Non-fatal: skip this sub-check on error rather than returning an
@@ -189,7 +189,7 @@ func init() {
 
 			// Step 4: if Dependabot is configured, check that all required status
 			// checks also fire on recent Dependabot PRs.
-			hasDependabot, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".github/dependabot.yml")
+			hasDependabot, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, ".github/dependabot.yml", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-dependabot-yml", "error", err)
 				return ConventionResult{
@@ -199,7 +199,7 @@ func init() {
 			}
 			dependabotSatisfiabilityCheckSkipped := false
 			if hasDependabot {
-				depInfo, err := GitHubRecentDependabotPRInfoFromBase(base, repo.GitHubToken, repo.Name)
+				depInfo, err := GitHubRecentDependabotPRInfoFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "required-status-checks-coherent", "repo", repo.Name, "step", "fetch-dependabot-pr-checks", "error", err)
 					return ConventionResult{

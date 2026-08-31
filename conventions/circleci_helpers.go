@@ -2,6 +2,7 @@ package conventions
 
 import (
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -204,9 +205,10 @@ func (e *ciJobEntry) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // parseCIConfig fetches and parses the CircleCI config for a repo. It returns
-// (nil, nil) if the file does not exist.
-func parseCIConfig(baseURL, token, repo string, ref ...string) (*circleCIConfig, error) {
-	content, err := GitHubFileContentFromBase(baseURL, token, repo, ".circleci/config.yml", ref...)
+// (nil, nil) if the file does not exist. client is the HTTP client to use
+// (nil for http.DefaultClient — see RepoContext.Client).
+func parseCIConfig(baseURL, token, repo string, client *http.Client, ref ...string) (*circleCIConfig, error) {
+	content, err := GitHubFileContentFromBase(baseURL, token, repo, ".circleci/config.yml", client, ref...)
 	if err != nil {
 		return nil, err
 	}

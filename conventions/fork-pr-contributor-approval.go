@@ -34,13 +34,14 @@ type forkPRContributorApprovalResponse struct {
 // GitHubForkPRContributorApproval fetches the fork pull request contributor
 // approval policy for the given repository using the GitHub REST API.
 func GitHubForkPRContributorApproval(token, repo string) (string, error) {
-	return GitHubForkPRContributorApprovalFromBase(GitHubBaseURL, token, repo)
+	return GitHubForkPRContributorApprovalFromBase(GitHubBaseURL, token, repo, nil)
 }
 
 // GitHubForkPRContributorApprovalFromBase is the implementation of
 // GitHubForkPRContributorApproval with an injectable base URL, used by tests
-// to point at a fake server.
-func GitHubForkPRContributorApprovalFromBase(baseURL, token, repo string) (string, error) {
+// to point at a fake server. client is the HTTP client to use (nil for
+// http.DefaultClient — see RepoContext.Client).
+func GitHubForkPRContributorApprovalFromBase(baseURL, token, repo string, client *http.Client) (string, error) {
 	url := fmt.Sprintf("%s/repos/%s/actions/permissions/fork-pr-contributor-approval", baseURL, repo)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -50,7 +51,7 @@ func GitHubForkPRContributorApprovalFromBase(baseURL, token, repo string) (strin
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -92,7 +93,7 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			policy, err := GitHubForkPRContributorApprovalFromBase(base, repo.GitHubToken, repo.Name)
+			policy, err := GitHubForkPRContributorApprovalFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "fork-pr-contributor-approval", "repo", repo.Name, "error", err)
 				return ConventionResult{

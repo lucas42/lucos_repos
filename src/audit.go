@@ -303,8 +303,6 @@ func (s *AuditSweeper) sweep() error {
 	rateLimitTransport.MaxWait = sweepMaxWait
 	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
-	conventions.SetHTTPClient(cachingClient)
-	defer conventions.SetHTTPClient(nil)
 	defer func() {
 		slog.Info("GitHub API cache stats",
 			"unique_urls", cachingTransport.Stats(),
@@ -376,7 +374,7 @@ func (s *AuditSweeper) sweep() error {
 		// Fetch the repo's languages to determine the app/infra classification.
 		// The caching transport deduplicates this call for repos where
 		// no-stale-codeql-requirement-on-infra-repos also fetches languages.
-		languages, langErr := conventions.GitHubRepoLanguagesFromBase(s.githubAPIBaseURL, token, repoName)
+		languages, langErr := conventions.GitHubRepoLanguagesFromBase(s.githubAPIBaseURL, token, repoName, cachingClient)
 		hasCodeQL := false
 		if langErr != nil {
 			slog.Warn("Failed to fetch repo languages for app/infra classification", "repo", repoName, "error", langErr)
@@ -397,6 +395,7 @@ func (s *AuditSweeper) sweep() error {
 			Hosts:                 info.Hosts,
 			GitHubBaseURL:         s.githubAPIBaseURL,
 			UnsupervisedAgentCode: info.UnsupervisedAgentCode,
+			Client:                cachingClient,
 		}
 
 		for _, convention := range allConventions {
@@ -446,9 +445,10 @@ func (s *AuditSweeper) sweep() error {
 		retryThrottle := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
 		retryRateLimit := conventions.NewRateLimitTransport(retryThrottle)
 		retryRateLimit.MaxWait = sweepMaxWait
-		conventions.SetHTTPClient(&http.Client{Transport: retryRateLimit})
+		retryClient := &http.Client{Transport: retryRateLimit}
 
 		for _, pc := range pendingRetries {
+			pc.ctx.Client = retryClient
 			result := pc.convention.Check(pc.ctx)
 
 			if result.Err != nil {

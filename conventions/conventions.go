@@ -10,20 +10,15 @@ import (
 	"strings"
 )
 
-// httpClient is the HTTP client used by all convention helper functions.
-// It defaults to http.DefaultClient. Use SetHTTPClient to override it
-// with a caching transport during sweeps.
-var httpClient = http.DefaultClient
-
-// SetHTTPClient sets the HTTP client used by convention helper functions.
-// Pass nil to reset to http.DefaultClient. This is not safe for concurrent
-// use — call it before starting a sweep, not during one.
-func SetHTTPClient(c *http.Client) {
-	if c == nil {
-		httpClient = http.DefaultClient
-	} else {
-		httpClient = c
+// clientOrDefault returns client, or http.DefaultClient when client is nil.
+// Every convention helper takes its HTTP client as an explicit argument
+// (typically RepoContext.Client) rather than reading a package global, so
+// that a live request-serving path and a batch sweep can never share state.
+func clientOrDefault(client *http.Client) *http.Client {
+	if client == nil {
+		return http.DefaultClient
 	}
+	return client
 }
 
 // unexpectedStatusErr builds a descriptive error for an unexpected GitHub API
@@ -100,6 +95,13 @@ type RepoContext struct {
 	// Settings-based checks (branch protection, required status checks) ignore it.
 	// When empty, the repo's default branch is used.
 	Ref string
+
+	// Client is the HTTP client used for GitHub API calls made while checking
+	// this repo. When nil, helpers fall back to http.DefaultClient — the
+	// correct behaviour for a live request-serving path. Only batch callers
+	// that want caching/rate-limit-waiting behaviour (the scheduled sweep,
+	// the CI dry-run) should set this.
+	Client *http.Client
 }
 
 // ConventionResult is the outcome of running a single convention against a repo.
@@ -207,12 +209,13 @@ const GitHubBaseURL = "https://api.github.com"
 // given path. It uses the Contents API (checking for 200 vs 404) to determine
 // existence.
 func GitHubFileExists(token, repo, path string) (bool, error) {
-	return GitHubFileExistsFromBase(GitHubBaseURL, token, repo, path)
+	return GitHubFileExistsFromBase(GitHubBaseURL, token, repo, path, nil)
 }
 
 // GitHubFileExistsFromBase is the implementation of GitHubFileExists with an
-// injectable base URL, used by tests to point at a fake server.
-func GitHubFileExistsFromBase(baseURL, token, repo, path string, ref ...string) (bool, error) {
+// injectable base URL, used by tests to point at a fake server. client is the
+// HTTP client to use (nil for http.DefaultClient — see RepoContext.Client).
+func GitHubFileExistsFromBase(baseURL, token, repo, path string, client *http.Client, ref ...string) (bool, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
 	if len(ref) > 0 && ref[0] != "" {
 		url += "?ref=" + neturl.QueryEscape(ref[0])
@@ -225,7 +228,7 @@ func GitHubFileExistsFromBase(baseURL, token, repo, path string, ref ...string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return false, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -254,12 +257,13 @@ type gitHubContentsResponse struct {
 // GitHubFileContent fetches the decoded content of a file from a GitHub
 // repository. It returns (nil, nil) if the file does not exist.
 func GitHubFileContent(token, repo, path string) ([]byte, error) {
-	return GitHubFileContentFromBase(GitHubBaseURL, token, repo, path)
+	return GitHubFileContentFromBase(GitHubBaseURL, token, repo, path, nil)
 }
 
 // GitHubFileContentFromBase is the implementation of GitHubFileContent with an
-// injectable base URL, used by tests to point at a fake server.
-func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string) ([]byte, error) {
+// injectable base URL, used by tests to point at a fake server. client is the
+// HTTP client to use (nil for http.DefaultClient — see RepoContext.Client).
+func GitHubFileContentFromBase(baseURL, token, repo, path string, client *http.Client, ref ...string) ([]byte, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
 	if len(ref) > 0 && ref[0] != "" {
 		url += "?ref=" + neturl.QueryEscape(ref[0])
@@ -272,7 +276,7 @@ func GitHubFileContentFromBase(baseURL, token, repo, path string, ref ...string)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -327,12 +331,13 @@ type branchProtectionResponse struct {
 // GitHubBranchProtectionDetails fetches and parses the branch protection rules
 // for the given branch. It returns (nil, nil) when the branch is unprotected.
 func GitHubBranchProtectionDetails(token, repo, branch string) (*branchProtectionResponse, error) {
-	return GitHubBranchProtectionDetailsFromBase(GitHubBaseURL, token, repo, branch)
+	return GitHubBranchProtectionDetailsFromBase(GitHubBaseURL, token, repo, branch, nil)
 }
 
 // GitHubBranchProtectionDetailsFromBase is the implementation of
-// GitHubBranchProtectionDetails with an injectable base URL.
-func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string) (*branchProtectionResponse, error) {
+// GitHubBranchProtectionDetails with an injectable base URL. client is the
+// HTTP client to use (nil for http.DefaultClient — see RepoContext.Client).
+func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string, client *http.Client) (*branchProtectionResponse, error) {
 	url := fmt.Sprintf("%s/repos/%s/branches/%s/protection", baseURL, repo, branch)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -342,7 +347,7 @@ func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -368,12 +373,13 @@ func GitHubBranchProtectionDetailsFromBase(baseURL, token, repo, branch string) 
 // GitHubBranchProtectionEnabled returns true if the given branch has protection
 // rules enabled. It returns false (not an error) when the branch is unprotected.
 func GitHubBranchProtectionEnabled(token, repo, branch string) (bool, error) {
-	return GitHubBranchProtectionEnabledFromBase(GitHubBaseURL, token, repo, branch)
+	return GitHubBranchProtectionEnabledFromBase(GitHubBaseURL, token, repo, branch, nil)
 }
 
 // GitHubBranchProtectionEnabledFromBase is the implementation of
-// GitHubBranchProtectionEnabled with an injectable base URL.
-func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string) (bool, error) {
+// GitHubBranchProtectionEnabled with an injectable base URL. client is the
+// HTTP client to use (nil for http.DefaultClient — see RepoContext.Client).
+func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string, client *http.Client) (bool, error) {
 	url := fmt.Sprintf("%s/repos/%s/branches/%s/protection", baseURL, repo, branch)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -383,7 +389,7 @@ func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return false, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -407,13 +413,14 @@ func GitHubBranchProtectionEnabledFromBase(baseURL, token, repo, branch string) 
 // configured on the given branch's protection rules. It returns an empty slice
 // if the branch is unprotected (404) or has no required status checks.
 func GitHubRequiredStatusChecks(token, repo, branch string) ([]string, error) {
-	return GitHubRequiredStatusChecksFromBase(GitHubBaseURL, token, repo, branch)
+	return GitHubRequiredStatusChecksFromBase(GitHubBaseURL, token, repo, branch, nil)
 }
 
 // GitHubRequiredStatusChecksFromBase is the implementation of
 // GitHubRequiredStatusChecks with an injectable base URL, used by tests to
-// point at a fake server.
-func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]string, error) {
+// point at a fake server. client is the HTTP client to use (nil for
+// http.DefaultClient — see RepoContext.Client).
+func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string, client *http.Client) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/branches/%s/protection", baseURL, repo, branch)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -423,7 +430,7 @@ func GitHubRequiredStatusChecksFromBase(baseURL, token, repo, branch string) ([]
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -478,12 +485,13 @@ type gitHubDirEntry struct {
 // GitHubListDirectory lists the entries in a directory in a GitHub repository.
 // It returns (nil, nil) if the directory does not exist.
 func GitHubListDirectory(token, repo, path string) ([]gitHubDirEntry, error) {
-	return GitHubListDirectoryFromBase(GitHubBaseURL, token, repo, path)
+	return GitHubListDirectoryFromBase(GitHubBaseURL, token, repo, path, nil)
 }
 
 // GitHubListDirectoryFromBase is the implementation of GitHubListDirectory
-// with an injectable base URL.
-func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...string) ([]gitHubDirEntry, error) {
+// with an injectable base URL. client is the HTTP client to use (nil for
+// http.DefaultClient — see RepoContext.Client).
+func GitHubListDirectoryFromBase(baseURL, token, repo, path string, client *http.Client, ref ...string) ([]gitHubDirEntry, error) {
 	url := fmt.Sprintf("%s/repos/%s/contents/%s", baseURL, repo, path)
 	if len(ref) > 0 && ref[0] != "" {
 		url += "?ref=" + neturl.QueryEscape(ref[0])
@@ -496,7 +504,7 @@ func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...strin
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -523,12 +531,14 @@ func GitHubListDirectoryFromBase(baseURL, token, repo, path string, ref ...strin
 // the GitHub Languages API. It returns a map of language name to byte count.
 // Returns an empty map (not an error) if the repo has no detected languages.
 func GitHubRepoLanguages(token, repo string) (map[string]int, error) {
-	return GitHubRepoLanguagesFromBase(GitHubBaseURL, token, repo)
+	return GitHubRepoLanguagesFromBase(GitHubBaseURL, token, repo, nil)
 }
 
 // GitHubRepoLanguagesFromBase is the implementation of GitHubRepoLanguages
 // with an injectable base URL, used by tests to point at a fake server.
-func GitHubRepoLanguagesFromBase(baseURL, token, repo string) (map[string]int, error) {
+// client is the HTTP client to use (nil for http.DefaultClient — see
+// RepoContext.Client).
+func GitHubRepoLanguagesFromBase(baseURL, token, repo string, client *http.Client) (map[string]int, error) {
 	url := fmt.Sprintf("%s/repos/%s/languages", baseURL, repo)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -538,7 +548,7 @@ func GitHubRepoLanguagesFromBase(baseURL, token, repo string) (map[string]int, e
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -574,7 +584,7 @@ type statusEntry struct {
 // GitHubCommitStatusContextsFromBase fetches the combined status for a ref and
 // returns the list of status context names. Returns nil (not an error) if the
 // API returns 404.
-func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string) ([]string, error) {
+func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string, client *http.Client) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/commits/%s/status", baseURL, repo, ref)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -584,7 +594,7 @@ func GitHubCommitStatusContextsFromBase(baseURL, token, repo, ref string) ([]str
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -623,7 +633,7 @@ type checkRunEntry struct {
 
 // GitHubCheckRunNamesFromBase fetches check run names for a given ref.
 // Returns nil (not an error) if the API returns 404.
-func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, error) {
+func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string, client *http.Client) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/commits/%s/check-runs?per_page=100", baseURL, repo, ref)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -633,7 +643,7 @@ func GitHubCheckRunNamesFromBase(baseURL, token, repo, ref string) ([]string, er
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -670,7 +680,7 @@ type commitParentsResponse struct {
 
 // GitHubCommitParentsFromBase fetches the parent commit SHAs for the given ref.
 // Returns nil (not an error) if the API returns 404.
-func GitHubCommitParentsFromBase(baseURL, token, repo, ref string) ([]string, error) {
+func GitHubCommitParentsFromBase(baseURL, token, repo, ref string, client *http.Client) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/commits/%s", baseURL, repo, ref)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -680,7 +690,7 @@ func GitHubCommitParentsFromBase(baseURL, token, repo, ref string) ([]string, er
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
@@ -726,7 +736,7 @@ type pullRequestEntry struct {
 // check runs and commit status contexts. This mirrors how the main-branch
 // side fetches both sources. Returns (nil, nil) if no suitable PR is found
 // or the API is unavailable.
-func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, error) {
+func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string, client *http.Client) ([]string, error) {
 	// Try open PRs first, then recently closed.
 	for _, state := range []string{"open", "closed"} {
 		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=1", baseURL, repo, state)
@@ -738,7 +748,7 @@ func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, er
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-		resp, err := httpClient.Do(req)
+		resp, err := clientOrDefault(client).Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("GitHub API request failed: %w", err)
 		}
@@ -765,11 +775,11 @@ func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, er
 
 		// Fetch both check runs and commit statuses for the PR head,
 		// mirroring the main-branch approach.
-		checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha)
+		checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha, client)
 		if err != nil {
 			return nil, err
 		}
-		statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha)
+		statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha, client)
 		if err != nil {
 			return nil, err
 		}
@@ -802,7 +812,7 @@ func GitHubRecentPRCheckNamesFromBase(baseURL, token, repo string) ([]string, er
 // contexts. Fetches up to 10 recent PRs per state and filters client-side
 // for dependabot authorship. Returns (nil, nil) if no suitable Dependabot PR
 // is found or the API is unavailable.
-func GitHubRecentDependabotPRCheckNamesFromBase(baseURL, token, repo string) ([]string, error) {
+func GitHubRecentDependabotPRCheckNamesFromBase(baseURL, token, repo string, client *http.Client) ([]string, error) {
 	// Prefer closed PRs (checks have had time to complete), then open.
 	for _, state := range []string{"closed", "open"} {
 		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=10", baseURL, repo, state)
@@ -814,7 +824,7 @@ func GitHubRecentDependabotPRCheckNamesFromBase(baseURL, token, repo string) ([]
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-		resp, err := httpClient.Do(req)
+		resp, err := clientOrDefault(client).Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("GitHub API request failed: %w", err)
 		}
@@ -845,11 +855,11 @@ func GitHubRecentDependabotPRCheckNamesFromBase(baseURL, token, repo string) ([]
 
 			// Fetch both check runs and commit statuses for the PR head,
 			// mirroring the main-branch approach.
-			checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha)
+			checkRunNames, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, sha, client)
 			if err != nil {
 				return nil, err
 			}
-			statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha)
+			statusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, sha, client)
 			if err != nil {
 				return nil, err
 			}
@@ -893,7 +903,7 @@ type DependabotPRInfo struct {
 // for both the head commit and the base commit (the main-branch SHA at the
 // time the PR was created). Returns (nil, nil) if no suitable Dependabot PR
 // is found or the API is unavailable.
-func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*DependabotPRInfo, error) {
+func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string, client *http.Client) (*DependabotPRInfo, error) {
 	// Prefer closed PRs (checks have had time to complete), then open.
 	for _, state := range []string{"closed", "open"} {
 		url := fmt.Sprintf("%s/repos/%s/pulls?state=%s&sort=updated&direction=desc&per_page=10", baseURL, repo, state)
@@ -905,7 +915,7 @@ func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*Dependa
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-		resp, err := httpClient.Do(req)
+		resp, err := clientOrDefault(client).Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("GitHub API request failed: %w", err)
 		}
@@ -934,11 +944,11 @@ func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*Dependa
 			}
 
 			// Fetch check names for the PR head commit.
-			headCheckRuns, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, pr.Head.SHA)
+			headCheckRuns, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, pr.Head.SHA, client)
 			if err != nil {
 				return nil, err
 			}
-			headStatusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, pr.Head.SHA)
+			headStatusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, pr.Head.SHA, client)
 			if err != nil {
 				return nil, err
 			}
@@ -970,11 +980,11 @@ func GitHubRecentDependabotPRInfoFromBase(baseURL, token, repo string) (*Dependa
 			// Fetch check names for the base commit (main at the time the PR
 			// was opened) if a base SHA is available.
 			if pr.Base.SHA != "" {
-				baseCheckRuns, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, pr.Base.SHA)
+				baseCheckRuns, err := GitHubCheckRunNamesFromBase(baseURL, token, repo, pr.Base.SHA, client)
 				if err != nil {
 					return nil, err
 				}
-				baseStatusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, pr.Base.SHA)
+				baseStatusContexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, pr.Base.SHA, client)
 				if err != nil {
 					return nil, err
 				}
@@ -1017,37 +1027,41 @@ type gitHubSecretsResponse struct {
 // secret names but not their values. Returns an empty slice (not an error) if
 // the repo has no secrets.
 func GitHubRepoSecretNames(token, repo string) ([]string, error) {
-	return GitHubRepoSecretNamesFromBase(GitHubBaseURL, token, repo)
+	return GitHubRepoSecretNamesFromBase(GitHubBaseURL, token, repo, nil)
 }
 
 // GitHubRepoSecretNamesFromBase is the implementation of GitHubRepoSecretNames
 // with an injectable base URL, used by tests to point at a fake server.
+// client is the HTTP client to use (nil for http.DefaultClient — see
+// RepoContext.Client).
 //
 // Note: this fetches only the first page (up to 100 secrets). Pagination is not
 // implemented because lucos repos have far fewer than 100 secrets in practice.
 // If a repo ever exceeds 100 secrets this check would produce a false negative.
-func GitHubRepoSecretNamesFromBase(baseURL, token, repo string) ([]string, error) {
-	return gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, "actions/secrets")
+func GitHubRepoSecretNamesFromBase(baseURL, token, repo string, client *http.Client) ([]string, error) {
+	return gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, "actions/secrets", client)
 }
 
 // GitHubRepoDependabotSecretNames returns the names of all Dependabot secrets
 // configured on the given repository. Returns an empty slice (not an error) if
 // the repo has no Dependabot secrets.
 func GitHubRepoDependabotSecretNames(token, repo string) ([]string, error) {
-	return GitHubRepoDependabotSecretNamesFromBase(GitHubBaseURL, token, repo)
+	return GitHubRepoDependabotSecretNamesFromBase(GitHubBaseURL, token, repo, nil)
 }
 
 // GitHubRepoDependabotSecretNamesFromBase is the implementation of
 // GitHubRepoDependabotSecretNames with an injectable base URL, used by tests.
-func GitHubRepoDependabotSecretNamesFromBase(baseURL, token, repo string) ([]string, error) {
-	return gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, "dependabot/secrets")
+// client is the HTTP client to use (nil for http.DefaultClient — see
+// RepoContext.Client).
+func GitHubRepoDependabotSecretNamesFromBase(baseURL, token, repo string, client *http.Client) ([]string, error) {
+	return gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, "dependabot/secrets", client)
 }
 
 // gitHubRepoSecretNamesForStoreFromBase fetches secret names from a GitHub
 // secrets API endpoint. The store parameter selects which store to query:
 // "actions/secrets" for Actions secrets, "dependabot/secrets" for Dependabot.
 // Both endpoints share the same response schema.
-func gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, store string) ([]string, error) {
+func gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, store string, client *http.Client) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s?per_page=100", baseURL, repo, store)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -1057,7 +1071,7 @@ func gitHubRepoSecretNamesForStoreFromBase(baseURL, token, repo, store string) (
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}

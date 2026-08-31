@@ -81,7 +81,7 @@ func init() {
 			}
 
 			// Step 1: find all Dockerfiles referenced by built services.
-			composeContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Ref)
+			composeContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "dockerfile-exposes-version", "repo", repo.Name, "step", "fetch-compose", "error", err)
 				return ConventionResult{
@@ -134,7 +134,7 @@ func init() {
 			var missingEnv []string
 
 			for _, dfPath := range dockerfilePaths {
-				dfContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dfPath, repo.Ref)
+				dfContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dfPath, repo.Client, repo.Ref)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "dockerfile-exposes-version", "repo", repo.Name, "step", "fetch-dockerfile", "path", dfPath, "error", err)
 					return ConventionResult{

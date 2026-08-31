@@ -29,13 +29,14 @@ type graphQLRepoDeleteBranchOnMergeResponse struct {
 // with administration access; GraphQL's deleteBranchOnMerge is available
 // to any app with metadata read access.
 func GitHubDeleteBranchOnMerge(token, repo string) (bool, error) {
-	return GitHubDeleteBranchOnMergeFromBase(GitHubBaseURL, token, repo)
+	return GitHubDeleteBranchOnMergeFromBase(GitHubBaseURL, token, repo, nil)
 }
 
 // GitHubDeleteBranchOnMergeFromBase is the implementation of
 // GitHubDeleteBranchOnMerge with an injectable base URL, used by tests to
-// point at a fake server.
-func GitHubDeleteBranchOnMergeFromBase(baseURL, token, repo string) (bool, error) {
+// point at a fake server. client is the HTTP client to use (nil for
+// http.DefaultClient — see RepoContext.Client).
+func GitHubDeleteBranchOnMergeFromBase(baseURL, token, repo string, client *http.Client) (bool, error) {
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) != 2 {
 		return false, fmt.Errorf("invalid repo name %q: expected owner/repo format", repo)
@@ -54,11 +55,11 @@ func GitHubDeleteBranchOnMergeFromBase(baseURL, token, repo string) (bool, error
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	// Use the package httpClient (not http.DefaultClient directly) so this
+	// Use the caller-supplied client (not http.DefaultClient directly) so this
 	// GraphQL call gets the same throttling and rate-limit retry as the REST
 	// content-fetch calls during a sweep (lucas42/lucos_repos#433) — it was
 	// previously bypassing that chain entirely.
-	resp, err := httpClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return false, fmt.Errorf("GitHub GraphQL request failed: %w", err)
 	}
@@ -102,7 +103,7 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			enabled, err := GitHubDeleteBranchOnMergeFromBase(base, repo.GitHubToken, repo.Name)
+			enabled, err := GitHubDeleteBranchOnMergeFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "delete-branch-on-merge", "repo", repo.Name, "error", err)
 				return ConventionResult{

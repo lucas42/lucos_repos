@@ -21,7 +21,7 @@ func init() {
 				base = GitHubBaseURL
 			}
 
-			protection, err := GitHubBranchProtectionDetailsFromBase(base, repo.GitHubToken, repo.Name, "main")
+			protection, err := GitHubBranchProtectionDetailsFromBase(base, repo.GitHubToken, repo.Name, "main", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "branch-protection-enabled", "repo", repo.Name, "error", err)
 				return ConventionResult{

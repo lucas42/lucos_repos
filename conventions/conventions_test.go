@@ -93,7 +93,7 @@ func TestHasCircleCIConfig_Pass(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exists, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
+	exists, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestHasCircleCIConfig_Fail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exists, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
+	exists, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestHasCircleCIConfig_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml")
+	_, err := GitHubFileExistsFromBase(server.URL, "fake-token", "lucas42/test_repo", ".circleci/config.yml", nil)
 	if err == nil {
 		t.Error("expected error for 500 response, got nil")
 	}

@@ -41,7 +41,7 @@ func init() {
 
 			// Step 1: fetch required status checks for main. If none exist,
 			// there's nothing stale — pass trivially.
-			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main")
+			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "no-stale-codeql-requirement-on-infra-repos", "repo", repo.Name, "step", "fetch-branch-protection", "error", err)
 				return ConventionResult{
@@ -72,7 +72,7 @@ func init() {
 			// infrastructure-only repo. If the repo has a CodeQL-supported language,
 			// this convention does not fire — required-status-checks-coherent handles
 			// the application-code side.
-			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "no-stale-codeql-requirement-on-infra-repos", "repo", repo.Name, "step", "fetch-languages", "error", err)
 				return ConventionResult{
