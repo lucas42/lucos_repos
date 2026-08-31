@@ -62,7 +62,7 @@ func init() {
 			}
 
 			// List all workflow files in .github/workflows/.
-			entries, err := GitHubListDirectoryFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows")
+			entries, err := GitHubListDirectoryFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "reusable-workflow-pinned", "repo", repo.Name, "step", "list-workflows", "error", err)
 				return ConventionResult{
@@ -99,7 +99,7 @@ func init() {
 			// Check each workflow file for unpinned reusable workflow references.
 			for _, filename := range workflowFiles {
 				path := ".github/workflows/" + filename
-				content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, path)
+				content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, path, repo.Client)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "reusable-workflow-pinned", "repo", repo.Name, "step", "fetch-"+filename, "error", err)
 					return ConventionResult{

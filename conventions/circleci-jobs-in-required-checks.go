@@ -3,6 +3,7 @@ package conventions
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 )
 
@@ -35,7 +36,7 @@ func init() {
 			}
 
 			// Step 1: parse the CircleCI config to find test* and build* job names.
-			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name, repo.Ref)
+			cfg, err := parseCIConfig(base, repo.GitHubToken, repo.Name, repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-jobs-in-required-checks", "repo", repo.Name, "step", "parse-circleci-config", "error", err)
 				return ConventionResult{
@@ -84,7 +85,7 @@ func init() {
 			}
 
 			// Step 2: fetch required status checks.
-			checks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main")
+			checks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main", repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "circleci-jobs-in-required-checks", "repo", repo.Name, "step", "fetch-branch-protection", "error", err)
 				return ConventionResult{
@@ -141,7 +142,7 @@ func init() {
 			// Look up the actual status context names from HEAD on main so we
 			// can tell the user the exact check name to add, including the
 			// correct format (legacy "ci/circleci: ..." or bare).
-			suggestedNames := resolveCheckNames(base, repo.GitHubToken, repo.Name, missing)
+			suggestedNames := resolveCheckNames(base, repo.GitHubToken, repo.Name, missing, repo.Client)
 
 			return ConventionResult{
 				Convention: "circleci-jobs-in-required-checks",
@@ -157,8 +158,8 @@ func init() {
 // whether CircleCI is using the legacy "ci/circleci: ..." format or bare names.
 // If the status API fails or a job can't be matched, the original job name is
 // returned as a fallback.
-func resolveCheckNames(baseURL, token, repo string, jobs []string) []string {
-	contexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, "heads/main")
+func resolveCheckNames(baseURL, token, repo string, jobs []string, client *http.Client) []string {
+	contexts, err := GitHubCommitStatusContextsFromBase(baseURL, token, repo, "heads/main", client)
 	if err != nil || contexts == nil {
 		// Can't determine actual format — return job names as-is.
 		return jobs

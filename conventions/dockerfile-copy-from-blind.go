@@ -179,7 +179,7 @@ func init() {
 			const conventionID = "dockerfile-copy-from-dependabot-blind"
 
 			// Step 1: fetch and parse docker-compose.yml.
-			composeContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Ref)
+			composeContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", conventionID, "repo", repo.Name, "step", "fetch-compose", "error", err)
 				return ConventionResult{
@@ -248,7 +248,7 @@ func init() {
 			var argInFromFindings []string
 
 			for dfPath, localCtxs := range dfLocalContexts {
-				dfContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dfPath, repo.Ref)
+				dfContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dfPath, repo.Client, repo.Ref)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", conventionID, "repo", repo.Name, "step", "fetch-dockerfile", "path", dfPath, "error", err)
 					return ConventionResult{

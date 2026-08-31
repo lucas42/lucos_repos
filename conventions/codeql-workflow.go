@@ -3,6 +3,7 @@ package conventions
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -30,7 +31,7 @@ func init() {
 			}
 
 			// Precondition: skip repos with no CodeQL-supported languages.
-			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "has-codeql-workflow", "repo", repo.Name, "step", "fetch-languages", "error", err)
 				return ConventionResult{
@@ -46,7 +47,7 @@ func init() {
 				}
 			}
 
-			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath, repo.Ref)
+			exists, err := GitHubFileExistsFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath, repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "has-codeql-workflow", "repo", repo.Name, "error", err)
 				return ConventionResult{
@@ -98,7 +99,7 @@ func init() {
 			}
 
 			// Precondition: skip repos with no CodeQL-supported languages.
-			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name)
+			languages, err := GitHubRepoLanguagesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-languages", "error", err)
 				return ConventionResult{
@@ -114,7 +115,7 @@ func init() {
 				}
 			}
 
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath, repo.Ref)
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, codeqlWorkflowPath, repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-file", "error", err)
 				return ConventionResult{
@@ -168,7 +169,7 @@ func init() {
 			// If a language is required in branch protection but absent from the explicit
 			// matrix, CodeQL may skip it on PRs that don't touch files in that language,
 			// silently blocking merges.
-			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main")
+			requiredChecks, err := GitHubRequiredStatusChecksFromBase(base, repo.GitHubToken, repo.Name, "main", repo.Client)
 			languageMatrixCheckSkipped := false
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "codeql-workflow-security-settings", "repo", repo.Name, "step", "fetch-required-checks", "error", err)
@@ -350,8 +351,8 @@ var analyzeLanguageRe = regexp.MustCompile(`^Analyze \(([^)]+)\)$`)
 // and returns its explicit strategy.matrix.language values. Returns nil (not an
 // error) if the file doesn't exist or if the workflow has no explicit language
 // matrix — callers should skip the language-mismatch check in those cases.
-func GitHubCodeQLExplicitLanguagesFromBase(baseURL, token, repo string) ([]string, error) {
-	content, err := GitHubFileContentFromBase(baseURL, token, repo, codeqlWorkflowPath)
+func GitHubCodeQLExplicitLanguagesFromBase(baseURL, token, repo string, client *http.Client) ([]string, error) {
+	content, err := GitHubFileContentFromBase(baseURL, token, repo, codeqlWorkflowPath, client)
 	if err != nil {
 		return nil, err
 	}

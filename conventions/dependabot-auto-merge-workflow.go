@@ -38,7 +38,7 @@ func init() {
 			// CI whatsoever. This is gated on directory presence, not file
 			// presence: a repo that HAS a workflows directory but no
 			// auto-merge file still fails below, unchanged.
-			entries, err := GitHubListDirectoryFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows", repo.Ref)
+			entries, err := GitHubListDirectoryFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows", repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "list-workflows", "error", err)
 				return ConventionResult{
@@ -63,7 +63,7 @@ func init() {
 			var content []byte
 			var foundFilename string
 			for _, filename := range filenames {
-				c, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, filename, repo.Ref)
+				c, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, filename, repo.Client, repo.Ref)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-workflow", "error", err)
 					return ConventionResult{
@@ -153,7 +153,7 @@ func init() {
 			// in the Actions secret store. Without them, the reusable workflow
 			// falls back to GITHUB_TOKEN for non-Dependabot PRs, suppressing
 			// push events and breaking CodeQL required status checks.
-			actionsSecretNames, err := GitHubRepoSecretNamesFromBase(base, repo.GitHubToken, repo.Name)
+			actionsSecretNames, err := GitHubRepoSecretNamesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-actions-secrets", "error", err)
 				return ConventionResult{
@@ -185,7 +185,7 @@ func init() {
 			// a Dependabot PR triggers the workflow. Without them in the Dependabot
 			// store, the reusable workflow falls back to GITHUB_TOKEN, which
 			// suppresses push events and breaks CodeQL required status checks.
-			dependabotSecretNames, err := GitHubRepoDependabotSecretNamesFromBase(base, repo.GitHubToken, repo.Name)
+			dependabotSecretNames, err := GitHubRepoDependabotSecretNamesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "dependabot-auto-merge-workflow", "repo", repo.Name, "step", "fetch-dependabot-secrets", "error", err)
 				return ConventionResult{

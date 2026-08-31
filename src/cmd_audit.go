@@ -106,8 +106,6 @@ func runAuditDryRun() {
 	rateLimitTransport.MaxWait = dryRunMaxWait
 	cachingTransport := conventions.NewCachingTransport(rateLimitTransport)
 	cachingClient := &http.Client{Transport: cachingTransport}
-	conventions.SetHTTPClient(cachingClient)
-	defer conventions.SetHTTPClient(nil)
 	defer func() {
 		slog.Info("GitHub API cache stats",
 			"unique_urls", cachingTransport.Stats(),
@@ -181,6 +179,7 @@ func runAuditDryRun() {
 			Hosts:                 info.Hosts,
 			GitHubBaseURL:         s.githubAPIBaseURL,
 			UnsupervisedAgentCode: info.UnsupervisedAgentCode,
+			Client:                cachingClient,
 		}
 
 		repoStatus := DryRunRepoStatus{
@@ -235,9 +234,10 @@ func runAuditDryRun() {
 		retryThrottle := conventions.NewThrottleTransport(http.DefaultTransport, s.contentFetchThrottleInterval)
 		retryRateLimit := conventions.NewRateLimitTransport(retryThrottle)
 		retryRateLimit.MaxWait = dryRunMaxWait
-		conventions.SetHTTPClient(&http.Client{Transport: retryRateLimit})
+		retryClient := &http.Client{Transport: retryRateLimit}
 
 		for _, pc := range pendingRetries {
+			pc.ctx.Client = retryClient
 			result := pc.convention.Check(pc.ctx)
 			repoStatus := report.Repos[pc.repoName]
 

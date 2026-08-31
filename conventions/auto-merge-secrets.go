@@ -31,7 +31,7 @@ func init() {
 
 			// Only the code-reviewer auto-merge workflow requires these secrets.
 			// The dependabot auto-merge workflow uses GITHUB_TOKEN only.
-			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/code-reviewer-auto-merge.yml", repo.Ref)
+			content, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, ".github/workflows/code-reviewer-auto-merge.yml", repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "auto-merge-secrets", "repo", repo.Name, "step", "fetch-workflow", "error", err)
 				return ConventionResult{
@@ -71,7 +71,7 @@ func init() {
 			// The workflow file references both secrets — verify they're actually
 			// configured on the repo. Without them, the reusable workflow falls back
 			// to GITHUB_TOKEN, which suppresses push events and breaks CodeQL checks.
-			secretNames, err := GitHubRepoSecretNamesFromBase(base, repo.GitHubToken, repo.Name)
+			secretNames, err := GitHubRepoSecretNamesFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "auto-merge-secrets", "repo", repo.Name, "step", "fetch-secrets", "error", err)
 				return ConventionResult{

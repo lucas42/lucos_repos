@@ -498,7 +498,7 @@ func TestGitHubRecentDependabotPRInfoFromBase_SkipsZeroCheckPR(t *testing.T) {
 	}))
 	defer server.Close()
 
-	info, err := GitHubRecentDependabotPRInfoFromBase(server.URL, "fake-token", "lucas42/test_repo")
+	info, err := GitHubRecentDependabotPRInfoFromBase(server.URL, "fake-token", "lucas42/test_repo", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

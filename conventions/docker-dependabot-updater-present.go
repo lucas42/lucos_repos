@@ -81,7 +81,7 @@ func init() {
 			conventionID := "docker-dependabot-updater-present"
 
 			// Step 1: fetch docker-compose.yml. If absent, no built services → skip.
-			composeContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Ref)
+			composeContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, "docker-compose.yml", repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", conventionID, "repo", repo.Name, "step", "fetch-compose", "error", err)
 				return ConventionResult{Convention: conventionID, Err: fmt.Errorf("error fetching docker-compose.yml: %w", err)}
@@ -116,7 +116,7 @@ func init() {
 			}
 
 			// Step 3: fetch and parse dependabot.yml.
-			dependabotContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dependabotPath, repo.Ref)
+			dependabotContent, err := GitHubFileContentFromBase(base, repo.GitHubToken, repo.Name, dependabotPath, repo.Client, repo.Ref)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", conventionID, "repo", repo.Name, "step", "fetch-dependabot", "error", err)
 				return ConventionResult{Convention: conventionID, Err: fmt.Errorf("error fetching %s: %w", dependabotPath, err)}

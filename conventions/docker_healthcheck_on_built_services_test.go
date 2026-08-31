@@ -461,7 +461,7 @@ func TestGitHubFileContent_ReturnsContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	content, err := GitHubFileContentFromBase(server.URL, "fake-token", "lucas42/test_repo", "docker-compose.yml")
+	content, err := GitHubFileContentFromBase(server.URL, "fake-token", "lucas42/test_repo", "docker-compose.yml", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestGitHubFileContent_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	content, err := GitHubFileContentFromBase(server.URL, "fake-token", "lucas42/test_repo", "docker-compose.yml")
+	content, err := GitHubFileContentFromBase(server.URL, "fake-token", "lucas42/test_repo", "docker-compose.yml", nil)
 	if err != nil {
 		t.Fatalf("unexpected error for 404: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestGitHubFileContent_APIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := GitHubFileContentFromBase(server.URL, "fake-token", "lucas42/test_repo", "docker-compose.yml")
+	_, err := GitHubFileContentFromBase(server.URL, "fake-token", "lucas42/test_repo", "docker-compose.yml", nil)
 	if err == nil {
 		t.Error("expected error for 403 response, got nil")
 	}
