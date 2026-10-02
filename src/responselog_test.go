@@ -87,3 +87,13 @@ func TestDashboardHandler_UnroutedPathReturns404(t *testing.T) {
 		}
 	}
 }
+
+func TestPRDashboardHandler_ClientDisconnectNotLoggedAsError(t *testing.T) {
+	req := httptest.NewRequest("GET", "/prs", nil)
+	out := captureLogs(t, func() {
+		newPRDashboardHandler(NewPRSweeper(nil))(brokenPipeWriter{httptest.NewRecorder()}, req)
+	})
+	if strings.Contains(out, "level=ERROR") {
+		t.Errorf("client disconnect on /prs logged at ERROR: %s", out)
+	}
+}
