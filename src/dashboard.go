@@ -195,6 +195,11 @@ type sweepStatusProvider interface {
 // newDashboardHandler returns the GET / handler backed by the given DB and sweep status provider.
 func newDashboardHandler(db *DB, sweeper sweepStatusProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// "GET /" matches every unrouted path; only the root itself is the dashboard.
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
 		report, err := db.GetStatusReport()
 		if err != nil {
 			slog.Error("Failed to build status report for dashboard", "error", err)
@@ -212,14 +217,14 @@ func newDashboardHandler(db *DB, sweeper sweepStatusProvider) http.HandlerFunc {
 			results := buildJSONResponse(data)
 			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(results); err != nil {
-				slog.Error("Failed to encode JSON response", "error", err)
+				logResponseWriteError("Failed to encode JSON response", err)
 			}
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := dashboardTemplate.Execute(w, data); err != nil {
-			slog.Error("Failed to render dashboard template", "error", err)
+			logResponseWriteError("Failed to render dashboard template", err)
 		}
 	}
 }

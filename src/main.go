@@ -239,7 +239,7 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(info); err != nil {
-			slog.Error("Failed to encode /_info response", "error", err)
+			logResponseWriteError("Failed to encode /_info response", err)
 		}
 	})
 
@@ -259,7 +259,7 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(report); err != nil {
-			slog.Error("Failed to encode /api/status response", "error", err)
+			logResponseWriteError("Failed to encode /api/status response", err)
 		}
 	})
 

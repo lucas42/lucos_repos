@@ -457,7 +457,7 @@ func newPRDashboardHandler(sweeper *PRSweeper) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := prDashboardTemplate.Execute(w, data); err != nil {
-			slog.Error("Failed to render PR dashboard template", "error", err)
+			logResponseWriteError("Failed to render PR dashboard template", err)
 		}
 	}
 }
