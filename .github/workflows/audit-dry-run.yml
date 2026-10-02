@@ -12,6 +12,11 @@ on:
 
 permissions: {}
 
+# A newer run for the same PR supersedes an in-flight one, so its estate-wide sweep stops spending shared App quota.
+concurrency:
+  group: audit-dry-run-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
 jobs:
   audit-dry-run:
     runs-on: ubuntu-latest
