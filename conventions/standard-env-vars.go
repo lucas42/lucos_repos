@@ -101,12 +101,12 @@ type gitBlobResponse struct {
 }
 
 // GitHubRepoTree fetches the full recursive tree for a repo's default branch.
-func GitHubRepoTree(baseURL, token, repo string) (*gitTreeResponse, error) {
-	return GitHubRepoTreeFromBase(baseURL, token, repo)
+func GitHubRepoTree(baseURL, token, repo string, client *http.Client) (*gitTreeResponse, error) {
+	return GitHubRepoTreeFromBase(baseURL, token, repo, client)
 }
 
 // GitHubRepoTreeFromBase fetches the recursive tree using HEAD.
-func GitHubRepoTreeFromBase(baseURL, token, repo string) (*gitTreeResponse, error) {
+func GitHubRepoTreeFromBase(baseURL, token, repo string, client *http.Client) (*gitTreeResponse, error) {
 	url := fmt.Sprintf("%s/repos/%s/git/trees/HEAD?recursive=1", baseURL, repo)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -116,7 +116,7 @@ func GitHubRepoTreeFromBase(baseURL, token, repo string) (*gitTreeResponse, erro
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub tree API request failed: %w", err)
 	}
@@ -137,7 +137,7 @@ func GitHubRepoTreeFromBase(baseURL, token, repo string) (*gitTreeResponse, erro
 }
 
 // GitHubBlobContent fetches the content of a git blob.
-func GitHubBlobContent(baseURL, token, repo, sha string) ([]byte, error) {
+func GitHubBlobContent(baseURL, token, repo, sha string, client *http.Client) ([]byte, error) {
 	url := fmt.Sprintf("%s/repos/%s/git/blobs/%s", baseURL, repo, sha)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -147,7 +147,7 @@ func GitHubBlobContent(baseURL, token, repo, sha string) ([]byte, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clientOrDefault(client).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub blob API request failed: %w", err)
 	}
@@ -179,8 +179,8 @@ func GitHubBlobContent(baseURL, token, repo, sha string) ([]byte, error) {
 // repoContainsEnvVar checks whether any source file in the repo references
 // the given env var name by fetching the repo tree and checking source files.
 // It uses the git trees and blobs APIs which only require contents:read permission.
-func repoContainsEnvVar(baseURL, token, repo, envVar string) (bool, error) {
-	tree, err := GitHubRepoTreeFromBase(baseURL, token, repo)
+func repoContainsEnvVar(baseURL, token, repo, envVar string, client *http.Client) (bool, error) {
+	tree, err := GitHubRepoTreeFromBase(baseURL, token, repo, client)
 	if err != nil {
 		return false, fmt.Errorf("error fetching repo tree: %w", err)
 	}
@@ -207,7 +207,7 @@ func repoContainsEnvVar(baseURL, token, repo, envVar string) (bool, error) {
 
 	// Check each source file for the env var reference.
 	for _, blob := range sourceBlobs {
-		content, err := GitHubBlobContent(baseURL, token, repo, blob.SHA)
+		content, err := GitHubBlobContent(baseURL, token, repo, blob.SHA, client)
 		if err != nil {
 			// Log and skip individual blob fetch failures rather than failing the whole check.
 			slog.Warn("Failed to fetch blob", "repo", repo, "path", blob.Path, "error", err)
@@ -280,7 +280,7 @@ func init() {
 				}
 
 				// Search source files for the env var reference.
-				found, err := repoContainsEnvVar(base, repo.GitHubToken, repo.Name, envVar)
+				found, err := repoContainsEnvVar(base, repo.GitHubToken, repo.Name, envVar, repo.Client)
 				if err != nil {
 					slog.Warn("Convention check failed", "convention", "standard-env-vars-in-compose", "repo", repo.Name, "step", "search-code", "envVar", envVar, "error", err)
 					return ConventionResult{

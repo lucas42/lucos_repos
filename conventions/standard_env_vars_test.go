@@ -419,3 +419,33 @@ services:
 		t.Error("expected LOGANNE_ENDPOINT to be declared from worker service")
 	}
 }
+
+type countingTransport struct{ calls int }
+
+func (c *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.calls++
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestGitHubTreeAndBlobFetchersUseSuppliedClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/git/trees/") {
+			_, _ = w.Write([]byte(`{"tree":[],"truncated":false}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"content":"aGk=","encoding":"base64"}`))
+	}))
+	defer srv.Close()
+
+	ct := &countingTransport{}
+	client := &http.Client{Transport: ct}
+	if _, err := GitHubRepoTreeFromBase(srv.URL, "tok", "o/r", client); err != nil {
+		t.Fatalf("tree fetch failed: %v", err)
+	}
+	if _, err := GitHubBlobContent(srv.URL, "tok", "o/r", "abc", client); err != nil {
+		t.Fatalf("blob fetch failed: %v", err)
+	}
+	if ct.calls != 2 {
+		t.Errorf("expected supplied client to carry 2 requests, got %d", ct.calls)
+	}
+}
