@@ -196,7 +196,7 @@ func newRerunHandler(db *DB, githubAuth *GitHubAuthClient, githubAPIBase, config
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(results); err != nil {
-			slog.Error("Failed to encode rerun response", "error", err)
+			logResponseWriteError("Failed to encode rerun response", err)
 		}
 	}
 }
