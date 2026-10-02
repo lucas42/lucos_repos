@@ -306,7 +306,7 @@ func init() {
 			declared := declaredEnvVars(compose)
 
 			// Fetch the repo tree to enumerate source files.
-			tree, err := GitHubRepoTreeFromBase(base, repo.GitHubToken, repo.Name)
+			tree, err := GitHubRepoTreeFromBase(base, repo.GitHubToken, repo.Name, repo.Client)
 			if err != nil {
 				slog.Warn("Convention check failed", "convention", "env_var_passthrough", "repo", repo.Name, "step", "fetch-tree", "error", err)
 				return ConventionResult{
@@ -338,7 +338,7 @@ func init() {
 					continue
 				}
 
-				content, err := GitHubBlobContent(base, repo.GitHubToken, repo.Name, entry.SHA)
+				content, err := GitHubBlobContent(base, repo.GitHubToken, repo.Name, entry.SHA, repo.Client)
 				if err != nil {
 					slog.Warn("Failed to fetch blob", "convention", "env_var_passthrough", "repo", repo.Name, "path", entry.Path, "error", err)
 					continue
