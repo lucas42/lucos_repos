@@ -202,13 +202,13 @@ func TestClassifyPR_FullyApproved(t *testing.T) {
 }
 
 // TestFetchRepoPRCounts_NoStaleDependabot verifies that a fresh Dependabot PR
-// (created less than 48h ago) is not included in the stale list.
+// younger than staleDependabotThreshold is not included in the stale list.
 func TestFetchRepoPRCounts_NoStaleDependabot(t *testing.T) {
-	recentTime := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	recentTime := time.Now().Add(-staleDependabotThreshold / 2).UTC().Format(time.RFC3339)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/pulls") && !strings.Contains(r.URL.Path, "/reviews") {
-			// Return one Dependabot PR that is only 24h old.
+			// Return one Dependabot PR younger than the threshold.
 			w.Write([]byte(`[{"number":1,"state":"open","created_at":"` + recentTime + `","user":{"login":"dependabot[bot]"}}]`))
 			return
 		}
@@ -230,18 +230,18 @@ func TestFetchRepoPRCounts_NoStaleDependabot(t *testing.T) {
 		t.Errorf("expected 1 total PR, got %d", counts.Total)
 	}
 	if len(stale) != 0 {
-		t.Errorf("expected no stale PRs for a 24h-old Dependabot PR, got %d", len(stale))
+		t.Errorf("expected no stale PRs for a Dependabot PR younger than the threshold, got %d", len(stale))
 	}
 }
 
 // TestFetchRepoPRCounts_StaleDependabotDetected verifies that a Dependabot PR
-// older than 48h is included in the stale list.
+// older than staleDependabotThreshold is included in the stale list.
 func TestFetchRepoPRCounts_StaleDependabotDetected(t *testing.T) {
-	staleTime := time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
+	staleTime := time.Now().Add(-staleDependabotThreshold * 2).UTC().Format(time.RFC3339)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/pulls") && !strings.Contains(r.URL.Path, "/reviews") {
-			// Return one Dependabot PR that is 72h old.
+			// Return one Dependabot PR older than the threshold.
 			w.Write([]byte(`[{"number":7,"state":"open","created_at":"` + staleTime + `","user":{"login":"dependabot[bot]"}}]`))
 			return
 		}
@@ -276,7 +276,7 @@ func TestFetchRepoPRCounts_StaleDependabotDetected(t *testing.T) {
 // TestFetchRepoPRCounts_NonDependabotNotFlagged verifies that a stale non-Dependabot PR
 // is not included in the stale Dependabot list.
 func TestFetchRepoPRCounts_NonDependabotNotFlagged(t *testing.T) {
-	staleTime := time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
+	staleTime := time.Now().Add(-staleDependabotThreshold * 2).UTC().Format(time.RFC3339)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/pulls") && !strings.Contains(r.URL.Path, "/reviews") {

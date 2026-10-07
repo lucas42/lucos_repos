@@ -53,7 +53,7 @@ type PRDashboardData struct {
 
 // staleDependabotThreshold is how long a Dependabot PR must be open before
 // it is considered stale and reported as a health signal failure.
-const staleDependabotThreshold = 48 * time.Hour
+const staleDependabotThreshold = 6 * time.Hour
 
 // StaleDependabotPR holds minimal info about a stale unmerged Dependabot PR.
 type StaleDependabotPR struct {
