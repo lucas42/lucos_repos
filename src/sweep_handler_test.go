@@ -63,6 +63,13 @@ func TestSweepHandler_ConflictWhenInProgress(t *testing.T) {
 
 func TestSweepHandler_PreventsConcurrentTriggers(t *testing.T) {
 	sweeper := newIdleSweeper(t)
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	sweeper.sweepFunc = func() error {
+		defer close(finished)
+		<-release
+		return nil
+	}
 	handler := newSweepHandler(sweeper)
 
 	// Use a WaitGroup to fire two requests simultaneously.
@@ -79,6 +86,8 @@ func TestSweepHandler_PreventsConcurrentTriggers(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	close(release)
+	<-finished
 
 	accepted := 0
 	conflict := 0
