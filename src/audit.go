@@ -164,6 +164,9 @@ type AuditSweeper struct {
 	// Overridable in tests to inject a fake client.
 	issueClientFactory func(token string) *GitHubIssueClient
 
+	// sweepFunc replaces sweep() when set. Overridable in tests.
+	sweepFunc func() error
+
 	mu                   sync.Mutex
 	lastSweepCompletedAt time.Time
 	lastSweepErr         error
@@ -229,7 +232,11 @@ func (s *AuditSweeper) TriggerSweep() bool {
 func (s *AuditSweeper) runSweep() {
 	slog.Info("Audit sweep starting")
 	start := time.Now()
-	if err := s.sweep(); err != nil {
+	run := s.sweep
+	if s.sweepFunc != nil {
+		run = s.sweepFunc
+	}
+	if err := run(); err != nil {
 		slog.Error("Audit sweep failed", "error", err, "duration", time.Since(start))
 		s.mu.Lock()
 		s.lastSweepErr = err
